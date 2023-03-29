@@ -1,2 +1,2 @@
 
-print("abc")
+print("it's work")
