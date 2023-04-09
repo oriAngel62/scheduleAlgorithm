@@ -16,12 +16,11 @@ class TaskType(Enum):
 
 
 class Task:
-    def __init__(self, id: int, name: str, priority: str, length: int,
+    def __init__(self, id: int, priority: str, length: int,
                  deadline: datetime, isRepeat: bool, optionalDays: List[str],
                  optionalHours: List[float], rankListHistory: List[int], type: str, description: str,
                  start: datetime = None):
         self.id = id
-        self.name = name
         self.priority = priority
         self.start = start if start else datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
         self.length = length
@@ -96,13 +95,13 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
     schedule = {}
     date_format = "%Y-%m-%d %H:%M:%S"
     weekdays = {
-        0: "Monday",
-        1: "Tuesday",
-        2: "Wednesday",
-        3: "Thursday",
-        4: "Friday",
-        5: "Saturday",
-        6: "Sunday"
+        0: "Sunday",
+        1: "Monday",
+        2: "Tuesday",
+        3: "Wednesday",
+        4: "Thursday",
+        5: "Friday",
+        6: "Saturday"
     }
     # Create time slots for the week
     start = datetime.combine(settings.startDate(), settings.startHour)
@@ -126,19 +125,29 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
     model = cp_model.CpModel()
 
     variables = {}
-    for i in range(num_slots):
-        for j in range(1,num_tasks + 1):
+    for i in range(1,8):
+        for j in range(num_slots):
             # A variable is True if time slot i is assigned to task j.
-            variables[(i, j)] = model.NewBoolVar(f"slot{i}_task{j}")
+            variables[(i, j)] = model.NewBoolVar(f"day{i}_slot{j}")
 
     # Add the constraints.
 
-    # Each time slot can only be linked to one task.
-    for i in range(num_slots):
-        model.Add(sum(variables[(i, j)] for j in range(1,num_tasks+1)) <= 1)
+    total_length = 0
+    gap = 1
+    num_of_slots_in_hour = 60 / settings.minTimeFrame
+    max_slots_per_day = settings.maxHoursPerDay * num_of_slots_in_hour
+    for task in tasks:
+        num_of_slots_in_task = task.length / settings.minTimeFrame
+        total_length = total_length + num_of_slots_in_task + gap
 
-    for i in range(num_tasks ):
-        model.Add(sum(variables[(j, i + 1)] for j in range(num_slots)) ==  int(tasks[i].length / settings.minTimeFrame) + 1)
+
+    #maxHoursPerDay constrain
+    for i in range(1,8):
+        model.Add(sum(variables[(i, j)] for j in range(num_slots)) == int(max_slots_per_day))
+
+    # Each time slot can only be linked to one task.
+    model.Add(sum(variables[(i, j)] for i in range(1,8) for j in range(num_slots)) == int(total_length) )
+
 
     task_to_index_its_options = {}
     consecutive_slots = {}
@@ -165,8 +174,6 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
                 continue
             for k in range(i, i + int(task.length / settings.minTimeFrame) + 1):
                 # create a datetime object with today's date and the corresponding time
-
-
                 if k == i or time_slots[k] != timedelta(minutes=settings.minTimeFrame) + time_slots[k - 1]:
                     # Start a new consecutive sequence.
                     consecutive_sequence = [time_slots[k]]
@@ -180,7 +187,8 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
                                 if weekdays[slot.weekday()] in task.optionalDays and slot >= time_task_may_start and slot <= time_task_may_end:
                                     every_slot_counter += 1
                             if every_slot_counter == int(task.length / settings.minTimeFrame) + 1:
-                                consecutive_slots[task.id].append(consecutive_sequence)
+                                # tuple of (sequence,day,startslot,endslot)
+                                consecutive_slots[task.id].append((consecutive_sequence,slot.weekday(),i,k))
 
                                 # valid_sequences[j].append(consecutive_sequence)
                                 count_seq += 1
@@ -190,16 +198,16 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
 
 
     i=1
-    seq_var = {}
-    for task in tasks:
-        task_seq = consecutive_slots[task.id]
-        for i, sequence in enumerate(task_seq):
-            seq_var[(task.id, i)] = model.NewBoolVar(f"task{task.id}_seq{i}")
-        # sequence_vars = []
-        # for sequence in task_seq:
-        #     sequence_vars.append(sequence)
-        total_seq_to_task = len(task_seq)
-        model.Add(sum(seq_var[(task.id, sequence_index)] for sequence_index in range(total_seq_to_task)) == 1)
+    # seq_var = {}
+    # for task in tasks:
+    #     task_seq = consecutive_slots[task.id]
+    #     for i, sequence in enumerate(task_seq):
+    #         seq_var[(task.id, i)] = model.NewBoolVar(f"task{task.id}_seq{i}")
+    #     # sequence_vars = []
+    #     # for sequence in task_seq:
+    #     #     sequence_vars.append(sequence)
+    #     total_seq_to_task = len(task_seq)
+    #     model.Add(sum(seq_var[(task.id, sequence_index)] for sequence_index in range(total_seq_to_task)) == 1)
 
 
     # Solve the model.
@@ -261,20 +269,18 @@ if __name__ == "__main__":
     tasks_data = [
         {
             "id": 1,
-            "name": "Task 1",
             "priority": "high",
             "length": 60,
-            "deadline": datetime(2023, 4, 5, 18, 0, 0),
+            "deadline": datetime(2023, 4, 15, 18, 0, 0),
             "isRepeat": False,
-            "optionalDays": ["Monday"],
-            "optionalHours": [11.50, 12.25],
+            "optionalDays": ["Sunday"],
+            "optionalHours": [9, 12.75],
             "rankListHistory": [1, 2, 3],
             "type": "A",
             "description": "This is task 1"
         },
         {
             "id": 2,
-            "name": "Task 2",
             "priority": "medium",
             "length": 45,
             "deadline": datetime(2023, 4, 2, 18, 0, 0),
@@ -287,7 +293,6 @@ if __name__ == "__main__":
         },
         {
             "id": 3,
-            "name": "Task 3",
             "priority": "low",
             "length": 30,
             "deadline": datetime(2023, 4, 1, 18, 0, 0),
