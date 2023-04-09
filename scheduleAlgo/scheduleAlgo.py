@@ -1,8 +1,10 @@
 from typing import List
 from datetime import datetime, timedelta
 from enum import Enum
-from constraint import Problem, AllDifferentConstraint
+from ortools.sat.python import cp_model
+from typing import List
 import json
+
 
 class TaskType(Enum):
     WORK = "work"
@@ -15,139 +17,326 @@ class TaskType(Enum):
 
 class Task:
     def __init__(self, id: int, name: str, priority: str, length: int,
-                 deadline: datetime, isRepeat: bool, isSeparable: bool, optionalDays: List[str],
-                 optionalHours: List[int], rankListHistory: List[int], type: TaskType, description: str, start :datetime= "2023-03-28 9:00:00"):
+                 deadline: datetime, isRepeat: bool, optionalDays: List[str],
+                 optionalHours: List[float], rankListHistory: List[int], type: str, description: str,
+                 start: datetime = None):
         self.id = id
         self.name = name
         self.priority = priority
-        self.start = start
+        self.start = start if start else datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
         self.length = length
         self.deadline = deadline
         self.isRepeat = isRepeat
-        self.isSeparable = isSeparable
         self.optionalDays = optionalDays
-        self.optionalHours = optionalHours
+        self.optionalHours = optionalHours                                   # two integers - start and end hours
         self.rankListHistory = rankListHistory
         self.type = type
         self.description = description
 
 
 class ScheduleSettings:
-    def __init__(self, startHour: int, endHour: int, minGap: int, maxHoursPerDay: int,
+    def __init__(self, startHour: str, endHour: str, minGap: int, maxHoursPerDay: int,
                  maxHoursPerTypePerDay: dict, minTimeFrame: int = 15):
-        self.startHour = startHour
-        self.endHour = endHour
+        self.startHour = datetime.strptime(startHour, "%H:%M:%S").time()
+        self.endHour = datetime.strptime(endHour, "%H:%M:%S").time()
         self.minGap = minGap
         self.maxHoursPerDay = maxHoursPerDay
         self.maxHoursPerTypePerDay = maxHoursPerTypePerDay
         self.minTimeFrame = minTimeFrame
+        self.slotLength = int((datetime.combine(datetime.min, datetime.strptime('00:15:00', '%H:%M:%S').time()) - datetime.min).total_seconds() / 60)
 
 
-def generate_schedule(tasks: List[Task], settings: ScheduleSettings) -> dict:
+    def numSlots(self) -> int:
+        return int((datetime.combine(datetime.now(), self.endHour) - datetime.combine(datetime.now(), self.startHour)).total_seconds() / (60 * self.minTimeFrame))
+
+    def numDays(self) -> int:
+        return 7  # assuming weekly schedule
+
+    def startDate(self) -> datetime:
+        # assuming weekly schedule starting on Monday
+        today = datetime.today()
+        return today - timedelta(days=today.weekday())
+
+    def last_day_of_week(self,date):
+        days_until_end_of_week = 6 - date.weekday()
+        last_day = date + timedelta(days=days_until_end_of_week)
+        return last_day
+
+    def next_day(self,date) -> datetime:
+        tomorrow = date + timedelta(days=1)
+        tomorrow = datetime(tomorrow.year, tomorrow.month, tomorrow.day, hour=self.startHour.hour)
+        return tomorrow
+
+    def slotLength(self) -> int:
+        return self.minTimeFrame
+
+    def number_slots_aday(self,allslots) -> int:
+        return len(allslots) / 7
+def overlaps(start1: int, end1: int, start2: int, end2: int) -> bool:
+    return end1 > start2 and end2 > start1
+
+
+# function to return key for any value
+def get_key(val,dict):
+    for key, value in dict.items():
+        if val == value:
+            return key
+    return "key doesn't exist"
+
+# def check_chosen_seq(task_id,seq,dict,variables,settings):
+#     index = []
+#     for i, slot in enumerate(seq):
+#         index[i] = get_key(slot,dict)
+#     if sum(variables[(j, task_id)] for j in len(index) ==  int(tasks[i].length / settings.minTimeFrame) + 1):
+
+
+
+
+def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=None) -> dict:
     schedule = {}
-    task_variables = {}
-
+    date_format = "%Y-%m-%d %H:%M:%S"
+    weekdays = {
+        0: "Monday",
+        1: "Tuesday",
+        2: "Wednesday",
+        3: "Thursday",
+        4: "Friday",
+        5: "Saturday",
+        6: "Sunday"
+    }
     # Create time slots for the week
-    start = datetime.now().replace(hour=settings.startHour, minute=0, second=0, microsecond=0)
-    end = start + timedelta(days=7)
+    start = datetime.combine(settings.startDate(), settings.startHour)
+    end = datetime.combine(settings.last_day_of_week(settings.startDate()), settings.endHour)
     time_slots = []
+    time_slots_dict = {}
+    slot_number = 0
     while start < end:
         time_slots.append(start)
+        time_slots_dict[slot_number] = start
+        slot_number += 1
         start += timedelta(minutes=settings.minTimeFrame)
+        if start.hour == settings.endHour.hour:
+            start = settings.next_day(start)
 
-    # Create variables for each task and time slot
+    num_slots = len(time_slots)
+    num_tasks = len(tasks)
+
+    # Create task variables
+    # Create the CP-SAT model.
+    model = cp_model.CpModel()
+
+    variables = {}
+    for i in range(num_slots):
+        for j in range(1,num_tasks + 1):
+            # A variable is True if time slot i is assigned to task j.
+            variables[(i, j)] = model.NewBoolVar(f"slot{i}_task{j}")
+
+    # Add the constraints.
+
+    # Each time slot can only be linked to one task.
+    for i in range(num_slots):
+        model.Add(sum(variables[(i, j)] for j in range(1,num_tasks+1)) <= 1)
+
+    for i in range(num_tasks ):
+        model.Add(sum(variables[(j, i + 1)] for j in range(num_slots)) ==  int(tasks[i].length / settings.minTimeFrame) + 1)
+
+    task_to_index_its_options = {}
+    consecutive_slots = {}
+    #Each task can be linked with only consecutive time slots according to its durability.
+    for j, task in enumerate(tasks):
+        consecutive_slots[task.id] = []
+        # task_to_index_its_options[j] = len(consecutive_slots)
+        hour_int_start = int(task.optionalHours[0])  # get the integer part of the hour
+        minute_int_start = int(
+            (task.optionalHours[0] - hour_int_start) * 60)  # get the minute part of the hour
+        hour_int_end = int(task.optionalHours[1])  # get the integer part of the hour
+        minute_int_end = int(
+            (task.optionalHours[1] - hour_int_end) * 60)  # get the minute part of the hour
+
+
+        for i in range(num_slots - int(task.length / settings.minTimeFrame)):
+            count_seq = 0
+            start_hour_minute = datetime(1, 1, 1, hour_int_start, minute_int_start).time()
+            time_task_may_start = datetime.combine(time_slots[i], start_hour_minute)
+            end_hour_minute = datetime(1, 1, 1, hour_int_end, minute_int_end).time()
+            time_task_may_end = datetime.combine(time_slots[i], end_hour_minute)
+            time_task_may_end = time_task_may_end + timedelta(minutes=15)
+            if not weekdays[time_slots[i].weekday()] in task.optionalDays or time_slots[i] < time_task_may_start or time_slots[i] > time_task_may_end:
+                continue
+            for k in range(i, i + int(task.length / settings.minTimeFrame) + 1):
+                # create a datetime object with today's date and the corresponding time
+
+
+                if k == i or time_slots[k] != timedelta(minutes=settings.minTimeFrame) + time_slots[k - 1]:
+                    # Start a new consecutive sequence.
+                    consecutive_sequence = [time_slots[k]]
+                else:
+                    # Add to the current consecutive sequence and add a new sequence.
+                    if k == i + int(task.length / settings.minTimeFrame):
+                        consecutive_sequence.append(time_slots[k])
+                        if len(consecutive_sequence) == int(task.length / settings.minTimeFrame) + 1:
+                            every_slot_counter = 0
+                            for slot in consecutive_sequence:
+                                if weekdays[slot.weekday()] in task.optionalDays and slot >= time_task_may_start and slot <= time_task_may_end:
+                                    every_slot_counter += 1
+                            if every_slot_counter == int(task.length / settings.minTimeFrame) + 1:
+                                consecutive_slots[task.id].append(consecutive_sequence)
+
+                                # valid_sequences[j].append(consecutive_sequence)
+                                count_seq += 1
+                        consecutive_sequence = []
+                    else:
+                        consecutive_sequence.append(time_slots[k])
+
+
+    i=1
+    seq_var = {}
     for task in tasks:
-        task_variables[task.id] = []
-        for slot in time_slots:
-            task_variables[task.id].append(f"{task.id}-{slot.strftime('%Y-%m-%d %H:%M:%S')}")
+        task_seq = consecutive_slots[task.id]
+        for i, sequence in enumerate(task_seq):
+            seq_var[(task.id, i)] = model.NewBoolVar(f"task{task.id}_seq{i}")
+        # sequence_vars = []
+        # for sequence in task_seq:
+        #     sequence_vars.append(sequence)
+        total_seq_to_task = len(task_seq)
+        model.Add(sum(seq_var[(task.id, sequence_index)] for sequence_index in range(total_seq_to_task)) == 1)
 
-    # Create CSP problem
-    problem = Problem()
 
-    # Create time slots for the week
-    start = datetime.now().replace(hour=settings.startHour, minute=0, second=0, microsecond=0)
-    end = start + timedelta(days=7)
-    time_slots = []
-    while start < end:
-        time_slots.append(start)
-        start += timedelta(minutes=settings.minTimeFrame)
+    # Solve the model.
+    solver = cp_model.CpSolver()
+    status = solver.Solve(model)
 
-    # Create variables for each task and time slot
-    for task in tasks:
-        task_variables[task.id] = []
-        for slot in time_slots:
-            task_variables[task.id].append(f"{task.id}-{slot.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # Create CSP problem
-    problem = Problem()
 
-    # Add variables and domains to the problem
-    for task in tasks:
-        for var in task_variables[task.id]:
-            problem.addVariable(var, time_slots)
+    # Create the schedule.
+    schedule = {}
+    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+        # for i in range(num_slots):
+        #     for j in range(num_tasks):
+        #         if solver.BooleanValue(variables[(i, j)]):
+        #                 schedule[time_slots[i].strftime(date_format)] = tasks[j].id
+        num_of_tasks = len(tasks)
+        for i in range(1, num_of_tasks + 1):
+            for j, seq in enumerate(consecutive_slots[i]):
+                if solver.BooleanValue(seq_var[(i, j)]):
+                    for slot in seq: #seq_var[(i, j)]:
+                        if solver.Value(variables[(get_key(slot,time_slots_dict),i)]) == 0:
+                            model.Add(variables[(get_key(slot,time_slots_dict),i)] == 1)
+                    # schedule[time_slots[get_key(consecutive_slots[i][j],i)].strftime(date_format)] = i
+        solver = cp_model.CpSolver()
+        status = solver.Solve(model)
+        if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+            for i in range(num_slots):
+                for j in range(num_tasks):
+                    if solver.BooleanValue(variables[(i, j + 1)]):
+                            schedule[time_slots[i].strftime(date_format)] = tasks[j].id
 
-    # Add constraints to the problem
-    for task in tasks:
-        for i, slot1 in enumerate(task_variables[task.id]):
-            for slot2 in task_variables[task.id][i + 1:]:
-                problem.addConstraint(
-                    lambda x, y: x + timedelta(minutes=task.length) + timedelta(minutes=settings.minGap) <= y,
-                    (slot1, slot2))
-
-        if not task.isSeparable:
-            problem.addConstraint(AllDifferentConstraint(), task_variables[task.id])
-
-    # Solve the problem
-    solutions = problem.getSolutions()
-    for sol in solutions:
-        for task in tasks:
-            schedule[task.id] = []
-            for var in task_variables[task.id]:
-                if sol[var] not in schedule.values():
-                    schedule[task.id].append(sol[var])
 
     return schedule
 
 
+
+
+
 if __name__ == "__main__":
 
-
     scheduleSettings = {
-        "id": 1,
         "startHour": "9:00:00",
         "endHour": "18:00:00",
         "minGap": 15,
         "maxHoursPerDay": 5,
-        "maxHoursPerTypePerDay": 3,
+        "maxHoursPerTypePerDay": {"A": 3, "B": 2},
         "minTimeFrame": 15
-
     }
 
+    schedule = ScheduleSettings(**scheduleSettings)
 
-    Tasks = [
+    print(schedule.startHour)  # Output: 09:00:00
+    print(schedule.endHour)  # Output: 18:00:00
+    print(schedule.minGap)  # Output: 0:15:00
+    print(schedule.maxHoursPerDay)  # Output: 5
+    print(schedule.maxHoursPerTypePerDay)  # Output: {'A': 3, 'B': 2}
+    print(schedule.minTimeFrame)  # Output: 0:15:00
+
+    tasks_data = [
         {
             "id": 1,
-            "startHour": "9:00:00",
-            "endHour": "18:00:00",
-            "minGap": 15,
-            "maxHoursPerDay": 5,
-            "maxHoursPerTypePerDay": 3,
-            "minTimeFrame": 15
+            "name": "Task 1",
+            "priority": "high",
+            "length": 60,
+            "deadline": datetime(2023, 4, 5, 18, 0, 0),
+            "isRepeat": False,
+            "optionalDays": ["Monday"],
+            "optionalHours": [11.50, 12.25],
+            "rankListHistory": [1, 2, 3],
+            "type": "A",
+            "description": "This is task 1"
         },
         {
-            "id": 1,
-            "startHour": "9:00:00",
-            "endHour": "18:00:00",
-            "minGap": 15,
-            "maxHoursPerDay": 5,
-            "maxHoursPerTypePerDay": 3,
-            "minTimeFrame": 15
+            "id": 2,
+            "name": "Task 2",
+            "priority": "medium",
+            "length": 45,
+            "deadline": datetime(2023, 4, 2, 18, 0, 0),
+            "isRepeat": True,
+            "optionalDays": ["Tuesday", "Thursday"],
+            "optionalHours": [9, 13],
+            "rankListHistory": [2, 1, 3],
+            "type": "B",
+            "description": "This is task 2"
+        },
+        {
+            "id": 3,
+            "name": "Task 3",
+            "priority": "low",
+            "length": 30,
+            "deadline": datetime(2023, 4, 1, 18, 0, 0),
+            "isRepeat": False,
+            "optionalDays": ["Monday"],
+            "optionalHours": [13, 14],
+            "rankListHistory": [3, 2, 1],
+            "type": "B",
+            "description": "This is task 3"
         }
     ]
 
+    tasks = []
+    for data in tasks_data:
+        task = Task(**data)
+        tasks.append(task)
+
+
+    print(generate_schedule(tasks,schedule))
     # convert into JSON:
-    scheduleSettingsObject = json.dumps(scheduleSettings)
-    tasksObject = json.dumps(Tasks)
+    # a1 = json.dumps(scheduleSettingsJSON)
+    # a2 = json.dumps(TasksJSON)
     # the result is a JSON string:
-    generate_schedule(())
-    print(tasksObject)
+    # generate_schedule(tasksObject, a2)
+
+def SimpleSatProgram():
+    """Minimal CP-SAT example to showcase calling the solver."""
+    # Creates the model.
+    model = cp_model.CpModel()
+
+    # Creates the variables.
+    num_vals = 3
+    x = model.NewIntVar(0, num_vals - 1, 'x')
+    y = model.NewIntVar(0, num_vals - 1, 'y')
+    z = model.NewIntVar(0, num_vals - 1, 'z')
+
+    # Creates the constraints.
+    model.Add(x != y)
+
+    # Creates a solver and solves the model.
+    solver = cp_model.CpSolver()
+    status = solver.Solve(model)
+
+    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+        print('x = %i' % solver.Value(x))
+        print('y = %i' % solver.Value(y))
+        print('z = %i' % solver.Value(z))
+    else:
+        print('No solution found.')
+
+
+# SimpleSatProgram()
