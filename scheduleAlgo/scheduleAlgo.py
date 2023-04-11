@@ -19,6 +19,16 @@ class TaskType(Enum):
 
 SAUNDAY = 0
 SATURDAY = 6
+weekdays = {
+    0: "Sunday",
+    1: "Monday",
+    2: "Tuesday",
+    3: "Wednesday",
+    4: "Thursday",
+    5: "Friday",
+    6: "Saturday"
+}
+
 
 class Task:
     def __init__(self, id: int, priority: str, length: int,
@@ -94,24 +104,11 @@ def get_key(val,dict):
 #     if sum(variables[(j, task_id)] for j in len(index) ==  int(tasks[i].length / settings.minTimeFrame) + 1):
 
 
-def prod(numbers):
-    result = 1
-    for num in numbers:
-        result *= num
-    return result
 
 def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=None) -> dict:
     schedule = {}
     date_format = "%Y-%m-%d %H:%M:%S"
-    weekdays = {
-        0: "Sunday",
-        1: "Monday",
-        2: "Tuesday",
-        3: "Wednesday",
-        4: "Thursday",
-        5: "Friday",
-        6: "Saturday"
-    }
+
     # Create time slots for the week
     start = datetime.combine(settings.startDate(), settings.startHour)
     end = datetime.combine(settings.last_day_of_week(settings.startDate()), settings.endHour)
@@ -129,15 +126,11 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
     num_slots = len(time_slots)
     num_tasks = len(tasks)
 
-    # Create task variables
-    # Create the CP-SAT model.
-    model = cp_model.CpModel()
-
     variables = {}
     for i in range(SAUNDAY,SATURDAY + 1):
         for j in range(num_slots):
             # A variable is True if time slot i is assigned to task j.
-            variables[(i, j)] = model.NewBoolVar(f"day{i}_slot{j}")
+            variables[(i, j)] = None
 
     # Add the constraints.
 
@@ -150,13 +143,12 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
         total_length = total_length + num_of_slots_in_task + gap
 
 
-    #maxHoursPerDay constrain
-    for i in range(SAUNDAY,SATURDAY + 1):
-        model.Add(sum(variables[(i, j)] for j in range(num_slots)) == int(max_slots_per_day))
-
-    # Each time slot can only be linked to one task.
-    model.Add(sum(variables[(i, j)] for i in range(SAUNDAY,SATURDAY + 1) for j in range(num_slots)) == int(total_length) )
-
+    # #maxHoursPerDay constrain
+    # for i in range(SAUNDAY,SATURDAY + 1):
+    #     model.Add(sum(variables[(i, j)] for j in range(num_slots)) == int(max_slots_per_day))
+    #
+    # # Each time slot can only be linked to one task.
+    # model.Add(sum(variables[(i, j)] for i in range(SAUNDAY,SATURDAY + 1) for j in range(num_slots)) == int(total_length) )
 
     task_to_index_its_options = {}
     consecutive_slots = {}
@@ -193,101 +185,69 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
                         if len(consecutive_sequence) == int(task.length / settings.minTimeFrame) + 1:
                             every_slot_counter = 0
                             for slot in consecutive_sequence:
-                                if weekdays[slot.weekday()] in task.optionalDays and slot >= time_task_may_start and slot <= time_task_may_end:
+                                if weekdays[
+                                    slot.weekday()] in task.optionalDays and slot >= time_task_may_start and slot <= time_task_may_end:
                                     every_slot_counter += 1
                             if every_slot_counter == int(task.length / settings.minTimeFrame) + 1:
-                                # tuple of (sequence,day,startslot,endslot)
-                                consecutive_slots[task.id].append((consecutive_sequence,slot.weekday(),i,k))
-
-                                # valid_sequences[j].append(consecutive_sequence)
-                                count_seq += 1
+                                # Check if the sequence ends before the deadline.
+                                # if datetime.combine(time_slots[k], end_hour_minute) <= task.deadline:
+                                    # tuple of (sequence,day,startslot,endslot)
+                                    consecutive_slots[task.id].append((consecutive_sequence, slot.weekday(), i, k))
+                                    count_seq += 1
                         consecutive_sequence = []
                     else:
                         consecutive_sequence.append(time_slots[k])
     num_of_tasks = len(tasks)
     task_sum = 1
-    # for i in range(1, num_of_tasks + 1):
-    #     for tuple in consecutive_slots[i]:
-    #         day = tuple[1]
-    #         start_slot = tuple[2]
-    #         end_slot = tuple[3]
-    #         # end_slot + 2 => one for range one for gap
-    #         result = 1
-    #         for j in range(start_slot, end_slot + 2):
-    #             result = result * variables[(day, j)]
-     # task_sum *= (variables[(day, j)] for j in range(start_slot, end_slot + 2))
-    #
-    # for i in range(1, len(tasks) + 1):
-    #     day_slots = [(variables[(day, j)]) for _, day, start_slot, end_slot in consecutive_slots[i] for j in
-    #                  range(start_slot, end_slot + 2)]
-    #     model.AddBoolOr([model.AddBoolAnd([x, y]), model.AddBoolAnd([y, z]), model.AddBoolAnd([x, z])])
-    #     model.AddBoolOr(day_slots).OnlyEnforceIf(tasks[i - 1])
-
-    for i in range(1, len(tasks) + 1):
-        or_seq = []
-        for _, day, start_slot, end_slot in consecutive_slots[i]:
-            and_seq = [variables[(day, j)] for j in range(start_slot, end_slot + 2)]
-            or_seq.append(model.AddBoolAnd(and_seq).OnlyEnforceIf(variables[(i, day, start_slot)]))
-        not_or_seq = [x.Not() for x in or_seq]
-        if not_or_seq:
-            model.AddBoolOr(not_or_seq).OnlyEnforceIf(variables[(i, day, start_slot)])
-
-        # model.AddBoolOr([model.AddBoolAnd(or_seq[0]), model.AddBoolAnd(or_seq[1])])
-        # or_clauses = []
-        # for start, end in zip(range(len(day_slots) - 5), range(5, len(day_slots))):
-        #     and_clauses = []
-        #     for j in range(start, end + 1):
-        #         and_clauses.append(day_slots[j])
-        #     or_clauses.append(model.AddBoolAnd(and_clauses))
-        # model.AddBoolOr(or_clauses)
-    # model.Add(sum(
-    #     res = res * variables[(day, j)]  for i in range(1, len(tasks) + 1) for _,day, start_slot, end_slot in consecutive_slots[i] for
-    #     j in range(start_slot, end_slot + 2)) == 1)
-
-    # seq_var = {}
-    # for task in tasks:
-    #     task_seq = consecutive_slots[task.id]
-    #     for i, sequence in enumerate(task_seq):
-    #         seq_var[(task.id, i)] = model.NewBoolVar(f"task{task.id}_seq{i}")
-    #     # sequence_vars = []
-    #     # for sequence in task_seq:
-    #     #     sequence_vars.append(sequence)
-    #     total_seq_to_task = len(task_seq)
-    #     model.Add(sum(seq_var[(task.id, sequence_index)] for sequence_index in range(total_seq_to_task)) == 1)
 
 
-    # Solve the model.
-    solver = cp_model.CpSolver()
-    status = solver.Solve(model)
+    unscheduled_tasks = []
+    # Try to schedule tasks one at a time
+    result, unscheduled_tasks = backtrack(schedule ,tasks,consecutive_slots, settings, variables, 1)
+
+    return result , unscheduled_tasks
 
 
+def backtrack(schedule, tasks, consecutive_slots, settings, variables, current_task_index):
+    # If all tasks have been scheduled, return the solution.
+    if current_task_index > len(tasks):
+        return schedule, []
 
-    # Create the schedule.
-    schedule = {}
-    # if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-    #     # for i in range(num_slots):
-    #     #     for j in range(num_tasks):
-    #     #         if solver.BooleanValue(variables[(i, j)]):
-    #     #                 schedule[time_slots[i].strftime(date_format)] = tasks[j].id
-    #     num_of_tasks = len(tasks)
-    #     for i in range(1, num_of_tasks + 1):
-    #         for j, seq in enumerate(consecutive_slots[i]):
-    #             if solver.BooleanValue(seq_var[(i, j)]):
-    #                 for slot in seq: #seq_var[(i, j)]:
-    #                     if solver.Value(variables[(get_key(slot,time_slots_dict),i)]) == 0:
-    #                         model.Add(variables[(get_key(slot,time_slots_dict),i)] == 1)
-                    # schedule[time_slots[get_key(consecutive_slots[i][j],i)].strftime(date_format)] = i
-        # solver = cp_model.CpSolver()
-        # status = solver.Solve(model)
-    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        for i in range(SAUNDAY,SATURDAY + 1):
-            for j in range(num_slots):
-                if solver.Value(variables[(i, j)]) == 1:
-                            schedule[time_slots[i].strftime(date_format)] = tasks[j].id
+    unscheduled_tasks = []
 
+    for block_index, block in enumerate(consecutive_slots[current_task_index]):
+        slots, day, start_slot_index, end_slot_index = block
+        for slot_index in range(start_slot_index, end_slot_index - len(slots) + 2):
+            # Check if the current slot is already scheduled.
+            conflict = False
+            for i, slot in enumerate(slots):
+                if variables[(day, slot_index + i)] is not None:
+                    conflict = True
+                    break
+            if conflict:
+                continue
 
-    return schedule
+            # If the current slot is not scheduled, schedule the task on these slots.
+            for i, slot in enumerate(slots):
+                variables[(day, slot_index + i)] = current_task_index
+                schedule[slot] = current_task_index
 
+            # Recursively try to schedule the next task.
+            next_task_schedule, next_unscheduled_tasks = backtrack(schedule.copy(), tasks, consecutive_slots, settings, variables, current_task_index + 1)
+
+            # If the next task has been scheduled, return the solution.
+            if next_task_schedule is not None:
+                return next_task_schedule, next_unscheduled_tasks
+
+            # If the next task could not be scheduled, add the current task to the unscheduled tasks list and undo the current task's schedule.
+            for i, slot in enumerate(slots):
+                variables[(day, slot_index + i)] = None
+                schedule[slot] = None
+
+    # If the current task could not be scheduled in any of its consecutive blocks, add it to the unscheduled tasks list.
+    unscheduled_tasks.append(current_task_index)
+
+    return None, unscheduled_tasks
 
 
 
@@ -320,7 +280,7 @@ if __name__ == "__main__":
             "deadline": datetime(2023, 4, 15, 18, 0, 0),
             "isRepeat": False,
             "optionalDays": ["Sunday"],
-            "optionalHours": [9, 10.25],
+            "optionalHours": [9.50, 10.50],
             "rankListHistory": [1, 2, 3],
             "type": "A",
             "description": "This is task 1"
@@ -331,8 +291,8 @@ if __name__ == "__main__":
             "length": 45,
             "deadline": datetime(2023, 4, 2, 18, 0, 0),
             "isRepeat": True,
-            "optionalDays": ["Tuesday", "Thursday"],
-            "optionalHours": [9, 13],
+            "optionalDays": ["Sunday"],
+            "optionalHours": [9.00, 9.75],
             "rankListHistory": [2, 1, 3],
             "type": "B",
             "description": "This is task 2"
@@ -340,11 +300,11 @@ if __name__ == "__main__":
         {
             "id": 3,
             "priority": "low",
-            "length": 30,
+            "length": 60,
             "deadline": datetime(2023, 4, 1, 18, 0, 0),
             "isRepeat": False,
-            "optionalDays": ["Monday"],
-            "optionalHours": [13, 14],
+            "optionalDays": ["Sunday"],
+            "optionalHours": [10.45, 12],
             "rankListHistory": [3, 2, 1],
             "type": "B",
             "description": "This is task 3"
