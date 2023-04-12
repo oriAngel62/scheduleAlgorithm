@@ -28,7 +28,7 @@ weekdays = {
     5: "Friday",
     6: "Saturday"
 }
-
+RANK_POLICY = 1
 
 class Task:
     def __init__(self, id: int, priority: str, length: int,
@@ -86,6 +86,9 @@ class ScheduleSettings:
 
     def number_slots_aday(self, allslots) -> int:
         return len(allslots) / 7
+
+    def get_end_hour(self):
+        return self.endHour
 def overlaps(start1: int, end1: int, start2: int, end2: int) -> bool:
     return end1 > start2 and end2 > start1
 
@@ -103,12 +106,12 @@ def get_key(val,dict):
 #         index[i] = get_key(slot,dict)
 #     if sum(variables[(j, task_id)] for j in len(index) ==  int(tasks[i].length / settings.minTimeFrame) + 1):
 
-def datetime_to_slot(datetime_obj, time_slots_dict, settings):
+def datetime_to_slot(datetime_obj, time_slots_dict):
     day_of_week = (datetime_obj.weekday() + 1) % 7  # Adjust for custom weekday start
     for slot_number, time_slot in time_slots_dict.items():
-        if time_slot == datetime_obj:
+        if time_slot.hour == datetime_obj.hour and time_slot.minute == datetime_obj.minute and day_of_week == time_slot.weekday():
             return (day_of_week, slot_number)
-    return None  # Return None if no slot found for given datetime
+    return datetime_obj  # Return None if no slot found for given datetime
 
 
 def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=None) -> dict:
@@ -133,7 +136,7 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
 
     variables = {}
     for slot_number, time_slot in time_slots_dict.items():
-        day_of_week = time_slot.weekday()  # 0 = Monday, 6 = Sunday
+        day_of_week = (time_slot.weekday() + 1) % 7
         variables[(day_of_week, slot_number)] = None
 
 
@@ -144,7 +147,7 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
     for task in tasks:
         num_of_slots_in_task = task.length / settings.minTimeFrame
         total_length = total_length + num_of_slots_in_task + gap
-        day_slot_tuple = datetime_to_slot(task.deadline, time_slots_dict, settings)
+        day_slot_tuple = datetime_to_slot(task.deadline, time_slots_dict)
 
 
     # #maxHoursPerDay constrain
@@ -166,6 +169,7 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
         hour_int_end = int(task.optionalHours[1])  # get the integer part of the hour
         minute_int_end = int(
             (task.optionalHours[1] - hour_int_end) * 60)  # get the minute part of the hour
+        deadline = task.deadline
 
 
         for i in range(num_slots - int(task.length / settings.minTimeFrame)):
@@ -175,7 +179,9 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
             end_hour_minute = datetime(1, 1, 1, hour_int_end, minute_int_end).time()
             time_task_may_end = datetime.combine(time_slots[i], end_hour_minute)
             time_task_may_end = time_task_may_end + timedelta(minutes=15)
-            if not weekdays[time_slots[i].weekday()] in task.optionalDays or time_slots[i] < time_task_may_start or time_slots[i] > time_task_may_end:
+            if not weekdays[(time_slots[i].weekday() + 1) % 7] in task.optionalDays or time_slots[i] < time_task_may_start or time_slots[i] > time_task_may_end :
+                continue
+            if time_slots[i] > task.deadline:
                 continue
             for k in range(i, i + int(task.length / settings.minTimeFrame) + 1):
                 # create a datetime object with today's date and the corresponding time
@@ -190,13 +196,13 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
                             every_slot_counter = 0
                             for slot in consecutive_sequence:
                                 if weekdays[
-                                    slot.weekday()] in task.optionalDays and slot >= time_task_may_start and slot <= time_task_may_end:
+                                    (slot.weekday() + 1) % 7] in task.optionalDays and slot >= time_task_may_start and slot <= time_task_may_end:
                                     every_slot_counter += 1
                             if every_slot_counter == int(task.length / settings.minTimeFrame) + 1:
                                 # Check if the sequence ends before the deadline.
                                 # if datetime.combine(time_slots[k], end_hour_minute) <= task.deadline:
                                     # tuple of (sequence,day,startslot,endslot)
-                                    consecutive_slots[task.id].append((consecutive_sequence, slot.weekday(), i, k))
+                                    consecutive_slots[task.id].append((consecutive_sequence, (slot.weekday() + 1) % 7, i, k))
                                     count_seq += 1
                         consecutive_sequence = []
                     else:
@@ -204,7 +210,7 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
     num_of_tasks = len(tasks)
     task_sum = 1
 
-
+    switch_consecutive_slots_sequence_according_to_rank(tasks,consecutive_slots , time_slots_dict)
     unscheduled_tasks = []
     # Try to schedule tasks one at a time
     result, unscheduled_tasks = backtrack(schedule ,tasks,consecutive_slots, settings, variables, 1)
@@ -233,7 +239,7 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables, current_t
 
             # If the current slot is not scheduled, schedule the task on these slots.
             for i, slot in enumerate(slots):
-                variables[(day, slot_index + i)] = current_task_index
+                variables[(day, start_slot_index + i)] = current_task_index
                 schedule[slot] = current_task_index
 
             # Recursively try to schedule the next task.
@@ -245,8 +251,8 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables, current_t
 
             # If the next task could not be scheduled, add the current task to the unscheduled tasks list and undo the current task's schedule.
             for i, slot in enumerate(slots):
-                variables[(day, slot_index + i)] = None
-                schedule[slot] = None
+                variables[(day, start_slot_index + i)] = None
+                del schedule[slot]
 
     # If the current task could not be scheduled in any of its consecutive blocks, add it to the unscheduled tasks list.
     unscheduled_tasks.append(current_task_index)
@@ -254,6 +260,31 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables, current_t
     return None, unscheduled_tasks
 
 
+
+def sort_by_rank_and_start_time(rank_list_history):
+    return sorted(rank_list_history, key=lambda x: (x['rank'], x['startTime'] ), reverse=True)
+
+def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_slots, time_slots_dict):
+    for task in tasks_data:
+        sorted_task = sort_by_rank_and_start_time(task.rankListHistory)
+        for i, consecutive_sequence in enumerate(consecutive_slots[task.id]):
+            for rank_data in sorted_task:
+                rank = rank_data['rank']
+                start_time = rank_data['startTime']
+                end_time = rank_data['endTime']
+                assigned_slots = []
+
+                #convert time to tuple
+                tuple_start = datetime_to_slot(rank_data['startTime'], time_slots_dict)
+                tuple_end = datetime_to_slot(rank_data['endTime'], time_slots_dict)
+
+                consecutive_sequence_start = datetime_to_slot(consecutive_sequence[0][0], time_slots_dict)
+                consecutive_sequence_end = datetime_to_slot(consecutive_sequence[0][-1], time_slots_dict)
+
+                if consecutive_sequence_start == tuple_start and consecutive_sequence_end == tuple_end and rank > RANK_POLICY:
+                    consecutive_slots[task.id].pop(i)
+                    consecutive_slots[task.id].insert(0, consecutive_sequence)
+                    break
 
 
 if __name__ == "__main__":
@@ -277,13 +308,13 @@ if __name__ == "__main__":
     # print(schedule.minTimeFrame)  # Output: 0:15:00
 
     tasks_data = [
-        {"id": 1, "priority": "high", "length": 60, "deadline": datetime(2023, 4, 10, 9, 0, 0), "isRepeat": False,
+        {"id": 1, "priority": "high", "length": 60, "deadline": datetime(2023, 4, 13, 9, 0, 0), "isRepeat": False,
          "optionalDays": ["Sunday"],
-         "optionalHours": [9.50, 10.50],
+         "optionalHours": [10.50, 12.50],
          "rankListHistory": [
-             {"rank": 1, "startTime": datetime(2023, 4, 10, 10, 0), "endTime": datetime(2023, 4, 10, 11, 0)},
+             {"rank": 6, "startTime": datetime(2023, 4, 3, 11, 30), "endTime": datetime(2023, 4, 3, 12, 30)},
              {"rank": 2, "startTime": datetime(2023, 4, 9, 9, 0), "endTime": datetime(2023, 4, 9, 10, 0)},
-             {"rank": 3, "startTime": datetime(2023, 4, 8, 12, 0), "endTime": datetime(2023, 4, 8, 13, 0)}
+             {"rank": 6, "startTime": datetime(2023, 4, 8, 12, 0), "endTime": datetime(2023, 4, 8, 13, 0)}
          ],
          "type": "A",
          "description": "This is task 1"
@@ -292,13 +323,13 @@ if __name__ == "__main__":
             "id": 2,
             "priority": "medium",
             "length": 45,
-            "deadline": datetime(2023, 4, 2, 18, 0, 0),
+            "deadline": datetime(2023, 4, 11, 11, 0, 0),
             "isRepea"
             "t": True,
-            "optionalDays": ["Sunday"],
-            "optionalHours": [9.00, 9.75],
+            "optionalDays": ["Monday"],
+            "optionalHours": [10.50, 13.00],
             "rankListHistory": [
-                {"rank": 2, "startTime": datetime(2023, 4, 3, 9, 0), "endTime": datetime(2023, 4, 3, 9, 45)},
+                {"rank": 2, "startTime": datetime(2023, 4, 3, 11, 30), "endTime": datetime(2023, 4, 3, 12, 15)},
                 {"rank": 1, "startTime": datetime(2023, 4, 2, 9, 0), "endTime": datetime(2023, 4, 2, 9, 45)},
                 {"rank": 3, "startTime": datetime(2023, 4, 1, 9, 0), "endTime": datetime(2023, 4, 1, 9, 45)}
             ],
@@ -309,9 +340,9 @@ if __name__ == "__main__":
             "id": 3,
             "priority": "low",
             "length": 60,
-            "deadline": datetime(2023, 4, 1, 18, 0, 0),
+            "deadline": datetime(2023, 4, 11, 18, 0, 0),
             "isRepeat": False,
-            "optionalDays": ["Sunday"],
+            "optionalDays": ["Sunday","Monday"],
             "optionalHours": [10.45, 12],
             "rankListHistory": [
                 {"rank": 3, "startTime": datetime(2023, 4, 1, 11, 0), "endTime": datetime(2023, 4, 1, 12, 0)},
