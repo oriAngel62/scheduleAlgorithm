@@ -87,6 +87,7 @@ class ScheduleSettings:
     def number_slots_aday(self, allslots) -> int:
         return len(allslots) / 7
 
+
     def get_end_hour(self):
         return self.endHour
 def overlaps(start1: int, end1: int, start2: int, end2: int) -> bool:
@@ -147,15 +148,9 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
     for task in tasks:
         num_of_slots_in_task = task.length / settings.minTimeFrame
         total_length = total_length + num_of_slots_in_task + gap
-        day_slot_tuple = datetime_to_slot(task.deadline, time_slots_dict)
 
 
-    # #maxHoursPerDay constrain
-    # for i in range(SAUNDAY,SATURDAY + 1):
-    #     model.Add(sum(variables[(i, j)] for j in range(num_slots)) == int(max_slots_per_day))
-    #
-    # # Each time slot can only be linked to one task.
-    # model.Add(sum(variables[(i, j)] for i in range(SAUNDAY,SATURDAY + 1) for j in range(num_slots)) == int(total_length) )
+
 
     task_to_index_its_options = {}
     consecutive_slots = {}
@@ -210,12 +205,43 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
     num_of_tasks = len(tasks)
     task_sum = 1
 
-    switch_consecutive_slots_sequence_according_to_rank(tasks,consecutive_slots , time_slots_dict)
-    unscheduled_tasks = []
-    # Try to schedule tasks one at a time
-    result, unscheduled_tasks = backtrack(schedule ,tasks,consecutive_slots, settings, variables, 1)
+    switch_consecutive_slots_sequence_according_to_rank(tasks, consecutive_slots, time_slots_dict)
+    high_priority_task_list = []
+    medium_priority_task_list = []
+    low_priority_task_list = []
+    for task in tasks:
+        if task.priority == "high":
+            high_priority_task_list.append(task)
+        elif task.priority == "medium":
+            medium_priority_task_list.append(task)
+        else:
+            low_priority_task_list.append(task)
 
-    return result , unscheduled_tasks
+    sort_by_least_options(high_priority_task_list, consecutive_slots)
+    sort_by_least_options(medium_priority_task_list, consecutive_slots)
+    sort_by_least_options(low_priority_task_list, consecutive_slots)
+    all_tasks_sorted_together = high_priority_task_list + medium_priority_task_list + low_priority_task_list
+
+    # Try to schedule tasks one at a time
+    result, unscheduled_tasks = backtrack(schedule, all_tasks_sorted_together, consecutive_slots, settings, variables,
+                                            1)
+    if len(unscheduled_tasks) != 0:
+        print(f"cannot schedule tasks - {unscheduled_tasks}")
+
+    return result, unscheduled_tasks
+
+
+def sort_by_least_options(task_list, all_blocks):
+    task_list.sort(key=lambda task: len(all_blocks[task.id]))
+
+
+def checkLimitHourADay(variables, settings, day):
+    summ = 0
+    slotsADay = int(settings.number_slots_aday(variables))
+    for i in range(slotsADay * day, slotsADay * (day + 1)):
+        if variables[(day, i)] is not None:
+            summ += 1
+    return summ <= settings.maxHoursPerDay
 
 
 def backtrack(schedule, tasks, consecutive_slots, settings, variables, current_task_index):
@@ -225,7 +251,7 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables, current_t
 
     unscheduled_tasks = []
 
-    for block_index, block in enumerate(consecutive_slots[current_task_index]):
+    for block_index, block in enumerate(consecutive_slots[tasks[current_task_index - 1].id]):
         slots, day, start_slot_index, end_slot_index = block
         for slot_index in range(start_slot_index, end_slot_index - len(slots) + 2):
             # Check if the current slot is already scheduled.
@@ -237,16 +263,21 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables, current_t
             if conflict:
                 continue
 
-            # If the current slot is not scheduled, schedule the task on these slots.
-            for i, slot in enumerate(slots):
-                variables[(day, start_slot_index + i)] = current_task_index
-                schedule[slot] = current_task_index
+            # max hour per day check
+            if checkLimitHourADay(variables, settings, day):
+                # If the current slot is not scheduled, schedule the task on these slots.
+                for i, slot in enumerate(slots):
+                    variables[(day, start_slot_index + i)] = tasks[current_task_index - 1].id
+                    schedule[slot] = tasks[current_task_index - 1].id
+            else:
+                continue
 
             # Recursively try to schedule the next task.
-            next_task_schedule, next_unscheduled_tasks = backtrack(schedule.copy(), tasks, consecutive_slots, settings, variables, current_task_index + 1)
+            next_task_schedule, next_unscheduled_tasks = backtrack(schedule.copy(), tasks, consecutive_slots, settings,
+                                                                   variables, current_task_index + 1)
 
             # If the next task has been scheduled, return the solution.
-            if next_task_schedule is not None:
+            if len(next_unscheduled_tasks) == 0:
                 return next_task_schedule, next_unscheduled_tasks
 
             # If the next task could not be scheduled, add the current task to the unscheduled tasks list and undo the current task's schedule.
@@ -255,11 +286,9 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables, current_t
                 del schedule[slot]
 
     # If the current task could not be scheduled in any of its consecutive blocks, add it to the unscheduled tasks list.
-    unscheduled_tasks.append(current_task_index)
+    unscheduled_tasks.append(tasks[current_task_index - 1].id)
 
-    return None, unscheduled_tasks
-
-
+    return schedule, unscheduled_tasks
 
 def sort_by_rank_and_start_time(rank_list_history):
     return sorted(rank_list_history, key=lambda x: (x['rank'], x['startTime'] ), reverse=True)
