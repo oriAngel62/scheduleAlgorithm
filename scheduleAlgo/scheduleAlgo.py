@@ -50,12 +50,11 @@ class Task:
 
 class ScheduleSettings:
     def __init__(self, startHour: str, endHour: str, minGap: int, maxHoursPerDay: int,
-                 maxHoursPerTypePerDay: dict, minTimeFrame: int = 15):
+                 minTimeFrame: int = 15):
         self.startHour = datetime.strptime(startHour, "%H:%M:%S").time()
         self.endHour = datetime.strptime(endHour, "%H:%M:%S").time()
         self.minGap = minGap
         self.maxHoursPerDay = maxHoursPerDay
-        self.maxHoursPerTypePerDay = maxHoursPerTypePerDay
         self.minTimeFrame = minTimeFrame
         self.slotLength = int((datetime.combine(datetime.min, datetime.strptime('00:15:00', '%H:%M:%S').time()) - datetime.min).total_seconds() / 60)
 
@@ -323,7 +322,6 @@ if __name__ == "__main__":
         "endHour": "18:00:00",
         "minGap": 15,
         "maxHoursPerDay": 5,
-        "maxHoursPerTypePerDay": {"A": 3, "B": 2},
         "minTimeFrame": 15
     }
 
