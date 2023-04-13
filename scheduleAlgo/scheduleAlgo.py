@@ -244,14 +244,10 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
         for i, slot in enumerate(value):
             slot_time = slot.strftime("%H:%M:%S")
             if slot_time < start :
-                start = slot_time
                 datetime_start = slot
             if slot_time > end and i < len(value):
-                end = slot_time
                 datetime_end = slot
-
-        day = (datetime_end.weekday() + 1) % 7
-        task_day_start_end[key] = (day,start,end,datetime_start,datetime_end)
+        task_day_start_end[key] = (datetime_start,datetime_end)
 
 
 
