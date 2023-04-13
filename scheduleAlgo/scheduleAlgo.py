@@ -100,12 +100,6 @@ def get_key(val,dict):
             return key
     return "key doesn't exist"
 
-# def check_chosen_seq(task_id,seq,dict,variables,settings):
-#     index = []
-#     for i, slot in enumerate(seq):
-#         index[i] = get_key(slot,dict)
-#     if sum(variables[(j, task_id)] for j in len(index) ==  int(tasks[i].length / settings.minTimeFrame) + 1):
-
 def datetime_to_slot(datetime_obj, time_slots_dict):
     day_of_week = (datetime_obj.weekday() + 1) % 7  # Adjust for custom weekday start
     for slot_number, time_slot in time_slots_dict.items():
