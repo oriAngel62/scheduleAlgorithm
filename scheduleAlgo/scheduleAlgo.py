@@ -5,9 +5,7 @@ from ortools.sat.python import cp_model
 from typing import List
 import json
 from math import prod
-from signalrcore import Connection
-
-
+# from signalrcore import Connection
 import random
 
 class TaskType(Enum):
@@ -31,7 +29,7 @@ weekdays = {
     6: "Saturday"
 }
 RANK_POLICY = 1
-NUMOFSOLUTIONS = 5
+NUMOFSOLUTIONS = 1
 class Task:
     def __init__(self, id: int, priority: str, length: int,
                  deadline: datetime, isRepeat: bool, optionalDays: List[str],
@@ -217,12 +215,12 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
         else:
             low_priority_task_list.append(task)
 
+    sort_by_least_options(high_priority_task_list, consecutive_slots)
+    sort_by_least_options(medium_priority_task_list, consecutive_slots)
+    sort_by_least_options(low_priority_task_list, consecutive_slots)
 
     solutions = {}
     for solution_index in range(0,NUMOFSOLUTIONS):
-        sort_by_least_options(high_priority_task_list, consecutive_slots)
-        sort_by_least_options(medium_priority_task_list, consecutive_slots)
-        sort_by_least_options(low_priority_task_list, consecutive_slots)
         random.shuffle(high_priority_task_list)
         random.shuffle(medium_priority_task_list)
         random.shuffle(low_priority_task_list)
@@ -346,6 +344,24 @@ def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_
                     consecutive_slots[task.id].pop(i)
                     consecutive_slots[task.id].insert(0, consecutive_sequence)
                     break
+
+def on_solution_received(solution):
+    print("Solution received by server:", solution)
+def siganlRConnection(solution):
+    # Connect to the SignalR hub on the server
+    with Connection("http://localhost:3000/signalr") as connection:
+        # Set up the function to be called when the server receives the solution
+        connection.on("ReceiveSolution", on_solution_received)
+
+        # Start the connection
+        connection.start()
+
+        # Send the solution dictionary to the server
+        solution = {"task1": ["Monday 10:00", "Monday 12:00"], "task2": ["Tuesday 14:00", "Tuesday 16:00"]}
+        connection.send("SendSolution", solution)
+
+        # Wait for the server to acknowledge receipt of the solution
+        input("Press any key to exit...")
 
 
 if __name__ == "__main__":
@@ -471,23 +487,7 @@ def SimpleSatProgram():
 
 
 # Define the function that will be called by the server when it receives the solution
-def on_solution_received(solution):
-    print("Solution received by server:", solution)
 
-# Connect to the SignalR hub on the server
-with Connection("http://localhost:3000/signalr") as connection:
-    # Set up the function to be called when the server receives the solution
-    connection.on("ReceiveSolution", on_solution_received)
-
-    # Start the connection
-    connection.start()
-
-    # Send the solution dictionary to the server
-    solution = {"task1": ["Monday 10:00", "Monday 12:00"], "task2": ["Tuesday 14:00", "Tuesday 16:00"]}
-    connection.send("SendSolution", solution)
-
-    # Wait for the server to acknowledge receipt of the solution
-    input("Press any key to exit...")
 
 
 # SimpleSatProgram()
