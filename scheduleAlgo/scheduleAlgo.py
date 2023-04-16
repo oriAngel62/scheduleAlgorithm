@@ -113,6 +113,7 @@ def init_variables(time_slots_dict):
         day_of_week = (time_slot.weekday() + 1) % 7
         variables[(day_of_week, slot_number)] = None
     return variables
+
 def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=None) -> dict:
 
     date_format = "%Y-%m-%d %H:%M:%S"
@@ -240,17 +241,18 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
                 flipped[value].append(key)
 
         for key, value in flipped.items():
-            start = end_hour_minute.strftime("%H:%M:%S")
+            start = settings.endHour.strftime("%H:%M:%S")
             datetime_start = None
-            end = start_hour_minute.strftime("%H:%M:%S")
+            end = settings.startHour.strftime("%H:%M:%S")
             datetime_end = None
             for i, slot in enumerate(value):
                 slot_time = slot.strftime("%H:%M:%S")
-                if slot_time < start :
+                if slot_time < start:
                     datetime_start = slot
+                    start = slot_time
                 if slot_time > end and i < len(value):
                     datetime_end = slot
-            task_day_start_end[key] = (datetime_start,datetime_end)
+            task_day_start_end[key] = (datetime_start, datetime_end)
 
         solutions[solution_index] = task_day_start_end, unscheduled_tasks
     return solutions
@@ -450,22 +452,6 @@ if __name__ == "__main__":
             "type": "B",
             "description": "This is task 3"
         }
-        # {
-        #     "id": 4,
-        #     "priority": "low",
-        #     "length": 60,
-        #     "deadline": datetime(2023, 4, 11, 18, 0, 0),
-        #     "isRepeat": False,
-        #     "optionalDays": ["Sunday"],
-        #     "optionalHours": [12, 15],
-        #     "rankListHistory": [
-        #         {"rank": 3, "startTime": datetime(2023, 4, 1, 11, 0), "endTime": datetime(2023, 4, 1, 12, 0)},
-        #         {"rank": 2, "startTime": datetime(2023, 4, 1, 10, 0), "endTime": datetime(2023, 4, 1, 11, 0)},
-        #         {"rank": 1, "startTime": datetime(2023, 4, 1, 9, 0), "endTime": datetime(2023, 4, 1, 10, 0)}
-        #     ],
-        #     "type": "B",
-        #     "description": "This is task 3"
-        # }
     ]
 
     tasks = []
@@ -505,11 +491,6 @@ def SimpleSatProgram():
         print('z = %i' % solver.Value(z))
     else:
         print('No solution found.')
-
-
-
-# Define the function that will be called by the server when it receives the solution
-
 
 
 # SimpleSatProgram()
