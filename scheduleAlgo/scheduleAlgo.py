@@ -5,8 +5,10 @@ from ortools.sat.python import cp_model
 from typing import List
 import json
 from math import prod
+from signalrcore import Connection
 
 
+import random
 
 class TaskType(Enum):
     WORK = "work"
@@ -29,7 +31,7 @@ weekdays = {
     6: "Saturday"
 }
 RANK_POLICY = 1
-
+NUMOFSOLUTIONS = 5
 class Task:
     def __init__(self, id: int, priority: str, length: int,
                  deadline: datetime, isRepeat: bool, optionalDays: List[str],
@@ -107,9 +109,14 @@ def datetime_to_slot(datetime_obj, time_slots_dict):
             return (day_of_week, slot_number)
     return datetime_obj  # Return None if no slot found for given datetime
 
-
+def init_variables(time_slots_dict):
+    variables = {}
+    for slot_number, time_slot in time_slots_dict.items():
+        day_of_week = (time_slot.weekday() + 1) % 7
+        variables[(day_of_week, slot_number)] = None
+    return variables
 def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=None) -> dict:
-    schedule = {}
+
     date_format = "%Y-%m-%d %H:%M:%S"
     # Create time slots for the week
     start = datetime.combine(settings.startDate(), settings.startHour)
@@ -210,43 +217,48 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
         else:
             low_priority_task_list.append(task)
 
-    sort_by_least_options(high_priority_task_list, consecutive_slots)
-    sort_by_least_options(medium_priority_task_list, consecutive_slots)
-    sort_by_least_options(low_priority_task_list, consecutive_slots)
-    all_tasks_sorted_together = high_priority_task_list + medium_priority_task_list + low_priority_task_list
 
-    # Try to schedule tasks one at a time
-    result, unscheduled_tasks = backtrack(schedule, all_tasks_sorted_together, consecutive_slots, settings, variables,time_slots_dict,
-                                            1)
-    if len(unscheduled_tasks) != 0:
-        print(f"cannot schedule tasks - {unscheduled_tasks}")
+    solutions = {}
+    for solution_index in range(0,NUMOFSOLUTIONS):
+        sort_by_least_options(high_priority_task_list, consecutive_slots)
+        sort_by_least_options(medium_priority_task_list, consecutive_slots)
+        sort_by_least_options(low_priority_task_list, consecutive_slots)
+        random.shuffle(high_priority_task_list)
+        random.shuffle(medium_priority_task_list)
+        random.shuffle(low_priority_task_list)
+        all_tasks_sorted_together = high_priority_task_list + medium_priority_task_list + low_priority_task_list
 
-    flipped = {}
-    task_day_start_end = {}
+        # Try to schedule tasks one at a time
+        schedule = {}
+        variables = init_variables(time_slots_dict)
+        result, unscheduled_tasks = backtrack(schedule, all_tasks_sorted_together, consecutive_slots, settings, variables,time_slots_dict, 1)
+        if len(unscheduled_tasks) != 0:
+            print(f"cannot schedule tasks - {unscheduled_tasks}")
 
-    for key, value in result.items():
-        if value not in flipped:
-            flipped[value] = [key]
-        else:
-            flipped[value].append(key)
+        flipped = {}
+        task_day_start_end = {}
 
-    for key, value in flipped.items():
-        start = end_hour_minute.strftime("%H:%M:%S")
-        datetime_start = None
-        end = start_hour_minute.strftime("%H:%M:%S")
-        datetime_end = None
-        for i, slot in enumerate(value):
-            slot_time = slot.strftime("%H:%M:%S")
-            if slot_time < start :
-                datetime_start = slot
-            if slot_time > end and i < len(value):
-                datetime_end = slot
-        task_day_start_end[key] = (datetime_start,datetime_end)
+        for key, value in result.items():
+            if value not in flipped:
+                flipped[value] = [key]
+            else:
+                flipped[value].append(key)
 
+        for key, value in flipped.items():
+            start = end_hour_minute.strftime("%H:%M:%S")
+            datetime_start = None
+            end = start_hour_minute.strftime("%H:%M:%S")
+            datetime_end = None
+            for i, slot in enumerate(value):
+                slot_time = slot.strftime("%H:%M:%S")
+                if slot_time < start :
+                    datetime_start = slot
+                if slot_time > end and i < len(value):
+                    datetime_end = slot
+            task_day_start_end[key] = (datetime_start,datetime_end)
 
-
-
-    return task_day_start_end, unscheduled_tasks
+        solutions[solution_index] = task_day_start_end, unscheduled_tasks
+    return solutions
 
 
 def sort_by_least_options(task_list, all_blocks):
@@ -307,9 +319,6 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
     unscheduled_tasks.append(tasks[current_task_index - 1].id)
 
     task_start_end_time = {}
-
-
-
 
     return schedule, unscheduled_tasks
 
@@ -403,6 +412,22 @@ if __name__ == "__main__":
             "type": "B",
             "description": "This is task 3"
         }
+        # {
+        #     "id": 4,
+        #     "priority": "low",
+        #     "length": 60,
+        #     "deadline": datetime(2023, 4, 11, 18, 0, 0),
+        #     "isRepeat": False,
+        #     "optionalDays": ["Sunday"],
+        #     "optionalHours": [12, 15],
+        #     "rankListHistory": [
+        #         {"rank": 3, "startTime": datetime(2023, 4, 1, 11, 0), "endTime": datetime(2023, 4, 1, 12, 0)},
+        #         {"rank": 2, "startTime": datetime(2023, 4, 1, 10, 0), "endTime": datetime(2023, 4, 1, 11, 0)},
+        #         {"rank": 1, "startTime": datetime(2023, 4, 1, 9, 0), "endTime": datetime(2023, 4, 1, 10, 0)}
+        #     ],
+        #     "type": "B",
+        #     "description": "This is task 3"
+        # }
     ]
 
     tasks = []
@@ -442,6 +467,27 @@ def SimpleSatProgram():
         print('z = %i' % solver.Value(z))
     else:
         print('No solution found.')
+
+
+
+# Define the function that will be called by the server when it receives the solution
+def on_solution_received(solution):
+    print("Solution received by server:", solution)
+
+# Connect to the SignalR hub on the server
+with Connection("http://localhost:3000/signalr") as connection:
+    # Set up the function to be called when the server receives the solution
+    connection.on("ReceiveSolution", on_solution_received)
+
+    # Start the connection
+    connection.start()
+
+    # Send the solution dictionary to the server
+    solution = {"task1": ["Monday 10:00", "Monday 12:00"], "task2": ["Tuesday 14:00", "Tuesday 16:00"]}
+    connection.send("SendSolution", solution)
+
+    # Wait for the server to acknowledge receipt of the solution
+    input("Press any key to exit...")
 
 
 # SimpleSatProgram()
