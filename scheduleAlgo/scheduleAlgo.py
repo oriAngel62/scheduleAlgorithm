@@ -215,15 +215,12 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
         else:
             low_priority_task_list.append(task)
 
-    sort_by_least_options(high_priority_task_list, consecutive_slots)
-    sort_by_least_options(medium_priority_task_list, consecutive_slots)
-    sort_by_least_options(low_priority_task_list, consecutive_slots)
 
     solutions = {}
     for solution_index in range(0,NUMOFSOLUTIONS):
-        random.shuffle(high_priority_task_list)
-        random.shuffle(medium_priority_task_list)
-        random.shuffle(low_priority_task_list)
+        sort_by_least_options(high_priority_task_list, consecutive_slots)
+        sort_by_least_options(medium_priority_task_list, consecutive_slots)
+        sort_by_least_options(low_priority_task_list, consecutive_slots)
         all_tasks_sorted_together = high_priority_task_list + medium_priority_task_list + low_priority_task_list
 
         # Try to schedule tasks one at a time
@@ -261,7 +258,32 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
 
 def sort_by_least_options(task_list, all_blocks):
     task_list.sort(key=lambda task: len(all_blocks[task.id]))
+    sublists = {}
+    prev = 0
+    i = 0
+    same_num_of_options_list = []
+    for task in task_list:
+        if len(all_blocks[task.id]) != prev:
+            if prev != 0:
+                sublists[i] = same_num_of_options_list
+                i += 1
+                same_num_of_options_list = []
+            prev = len(all_blocks[task.id])
+        same_num_of_options_list.append(task)
 
+    if same_num_of_options_list != None:
+        sublists[i] = same_num_of_options_list
+
+    # Shuffle each sublist.
+    for sublist in sublists.values():
+        random.shuffle(sublist)
+
+    # Merge the shuffled sublists into a single list.
+    all_tasks_sorted_together = []
+    for sublist in sublists.values():
+        all_tasks_sorted_together.extend(sublist)
+
+    return all_tasks_sorted_together
 
 def checkLimitHourADay(variables, settings, day):
     summ = 0
@@ -419,7 +441,7 @@ if __name__ == "__main__":
             "deadline": datetime(2023, 4, 11, 18, 0, 0),
             "isRepeat": False,
             "optionalDays": ["Sunday","Monday"],
-            "optionalHours": [10.45, 12],
+            "optionalHours": [10.75, 12],
             "rankListHistory": [
                 {"rank": 3, "startTime": datetime(2023, 4, 1, 11, 0), "endTime": datetime(2023, 4, 1, 12, 0)},
                 {"rank": 2, "startTime": datetime(2023, 4, 1, 10, 0), "endTime": datetime(2023, 4, 1, 11, 0)},
