@@ -369,6 +369,14 @@ def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_
                     consecutive_slots[task.id].insert(0, consecutive_sequence)
                     break
 
+def getAlgoCompleteRequest():
+    # api-endpoint
+    URL = "http://localhost/algoComplete"
+    r = requests.get(url=URL)
+    data = r.json()
+    return data[0] , data[1]
+
+
 def getTaskDataRequest():
     # api-endpoint
     URL = "http://localhost/taskData"
@@ -393,7 +401,9 @@ def postSchedule(data):
 if __name__ == "__main__":
 
     # Send the solution dictionary to the server
-    solution = generate_schedule(getTaskDataRequest(), getScheduleSettingsRequest())
+    task_data ,settings = getAlgoCompleteRequest()
+    solution = generate_schedule(task_data, settings)
+    # solution = generate_schedule(getTaskDataRequest(), getScheduleSettingsRequest())
     postSchedule(solution)
 
 
