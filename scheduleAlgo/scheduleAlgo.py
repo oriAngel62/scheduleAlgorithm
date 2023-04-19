@@ -7,7 +7,7 @@ import json
 from math import prod
 # from signalrcore import Connection
 import random
-
+import requests
 class TaskType(Enum):
     WORK = "work"
     STUDY = "study"
@@ -369,26 +369,33 @@ def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_
                     consecutive_slots[task.id].insert(0, consecutive_sequence)
                     break
 
-def on_solution_received(solution):
-    print("Solution received by server:", solution)
-def siganlRConnection(solution):
-    # Connect to the SignalR hub on the server
-    with Connection("http://localhost:3000/signalr") as connection:
-        # Set up the function to be called when the server receives the solution
-        connection.on("ReceiveSolution", on_solution_received)
+def getTaskDataRequest():
+    # api-endpoint
+    URL = "http://localhost/taskData"
+    r = requests.get(url=URL)
+    data = r.json()
+    return data
+def getScheduleSettingsRequest():
+    # api-endpoint
+    URL = "http://localhost/scheduleSettings"
+    r = requests.get(url=URL)
+    data = r.json()
+    return data
 
-        # Start the connection
-        connection.start()
 
-        # Send the solution dictionary to the server
-        solution = {"task1": ["Monday 10:00", "Monday 12:00"], "task2": ["Tuesday 14:00", "Tuesday 16:00"]}
-        connection.send("SendSolution", solution)
-
-        # Wait for the server to acknowledge receipt of the solution
-        input("Press any key to exit...")
+def postSchedule(data):
+    # defining the api-endpoint
+    API_ENDPOINT = "http://localhost/scheduleAlgo"
+    # sending post request and saving response as response object
+    r = requests.post(url=API_ENDPOINT, data=data)
 
 
 if __name__ == "__main__":
+
+    # Send the solution dictionary to the server
+    solution = generate_schedule(getTaskDataRequest(), getScheduleSettingsRequest())
+    postSchedule(solution)
+
 
     scheduleSettings = {
         "startHour": "9:00:00",
@@ -459,13 +466,20 @@ if __name__ == "__main__":
         task = Task(**data)
         tasks.append(task)
 
-
-    print(generate_schedule(tasks,schedule))
-    # convert into JSON:
-    # a1 = json.dumps(scheduleSettingsJSON)
-    # a2 = json.dumps(TasksJSON)
-    # the result is a JSON string:
-    # generate_schedule(tasksObject, a2)
+    # # Connect to the SignalR hub on the server
+    # with Connection("http://localhost:3000/signalr") as connection:
+    #     # Set up the function to be called when the server receives the solution
+    #     connection.on("ReceiveSolution", on_solution_received)
+    #
+    #     # Start the connection
+    #     connection.start()
+    #
+    #     # Send the solution dictionary to the server
+    #     solution = generate_schedule(tasks, schedule)
+    #     connection.send("SendSolution", solution)
+    #
+    #     # Wait for the server to acknowledge receipt of the solution
+    #     input("Press any key to exit...")
 
 def SimpleSatProgram():
     """Minimal CP-SAT example to showcase calling the solver."""
