@@ -8,6 +8,10 @@ from math import prod
 # from signalrcore import Connection
 import random
 import requests
+from flask import Flask , request, jsonify
+
+app = Flask(__name__)
+
 class TaskType(Enum):
     WORK = "work"
     STUDY = "study"
@@ -114,7 +118,12 @@ def init_variables(time_slots_dict):
         variables[(day_of_week, slot_number)] = None
     return variables
 
-def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=None) -> dict:
+@app.route('/algoComplete', methods=['POST'])
+def generate_schedule():
+    data = request.get_json()
+    algoComplete = data.get('complete')
+    settings = algoComplete.ScheduleSetting
+    tasks = algoComplete.AlgoMission
 
     date_format = "%Y-%m-%d %H:%M:%S"
     # Create time slots for the week
@@ -255,7 +264,8 @@ def generate_schedule(tasks: List[Task], settings: ScheduleSettings, variables=N
             task_day_start_end[key] = (datetime_start, datetime_end)
 
         solutions[solution_index] = task_day_start_end, unscheduled_tasks
-    return solutions
+        # Return the result as JSON
+    return jsonify(solutions)
 
 
 def sort_by_least_options(task_list, all_blocks):
@@ -369,60 +379,54 @@ def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_
                     consecutive_slots[task.id].insert(0, consecutive_sequence)
                     break
 
-def getAlgoCompleteRequest():
-    # api-endpoint
-    URL = "http://localhost/algoComplete"
-    r = requests.get(url=URL)
-    data = r.json()
-    return data[0] , data[1]
-
-
-def getTaskDataRequest():
-    # api-endpoint
-    URL = "http://localhost/taskData"
-    r = requests.get(url=URL)
-    data = r.json()
-    return data
-def getScheduleSettingsRequest():
-    # api-endpoint
-    URL = "http://localhost/scheduleSettings"
-    r = requests.get(url=URL)
-    data = r.json()
-    return data
-
-
-def postSchedule(data):
-    # defining the api-endpoint
-    API_ENDPOINT = "http://localhost/scheduleAlgo"
-    # sending post request and saving response as response object
-    r = requests.post(url=API_ENDPOINT, data=data)
+# def getAlgoCompleteRequest():
+#     # api-endpoint
+#     URL = "http://localhost/algoComplete"
+#     r = requests.get(url=URL)
+#     data = r.json()
+#     return data[0] , data[1]
+#
+#
+# def getTaskDataRequest():
+#     # api-endpoint
+#     URL = "http://localhost/taskData"
+#     r = requests.get(url=URL)
+#     data = r.json()
+#     return data
+# def getScheduleSettingsRequest():
+#     # api-endpoint
+#     URL = "http://localhost/scheduleSettings"
+#     r = requests.get(url=URL)
+#     data = r.json()
+#     return data
+#
+#
+# def postSchedule(data):
+#     # defining the api-endpoint
+#     API_ENDPOINT = "http://localhost/scheduleAlgo"
+#     # sending post request and saving response as response object
+#     r = requests.post(url=API_ENDPOINT, data=data)
 
 
 if __name__ == "__main__":
-
+    app.run(host='localhost', port=5000)
     # Send the solution dictionary to the server
-    task_data ,settings = getAlgoCompleteRequest()
-    solution = generate_schedule(task_data, settings)
-    # solution = generate_schedule(getTaskDataRequest(), getScheduleSettingsRequest())
-    postSchedule(solution)
+    # task_data ,settings = getAlgoCompleteRequest()         # we get
+    # solution = generate_schedule(task_data, settings)
+    # # solution = generate_schedule(getTaskDataRequest(), getScheduleSettingsRequest())
+    # postSchedule(solution)
+    #
+    #
+    # scheduleSettings = {
+    #     "startHour": "9:00:00",
+    #     "endHour": "18:00:00",
+    #     "minGap": 15,
+    #     "maxHoursPerDay": 5,
+    #     "minTimeFrame": 15
+    # }
+    #
+    # schedule = ScheduleSettings(**scheduleSettings)
 
-
-    scheduleSettings = {
-        "startHour": "9:00:00",
-        "endHour": "18:00:00",
-        "minGap": 15,
-        "maxHoursPerDay": 5,
-        "minTimeFrame": 15
-    }
-
-    schedule = ScheduleSettings(**scheduleSettings)
-
-    # print(schedule.startHour)  # Output: 09:00:00
-    # print(schedule.endHour)  # Output: 18:00:00
-    # print(schedule.minGap)  # Output: 0:15:00
-    # print(schedule.maxHoursPerDay)  # Output: 5
-    # print(schedule.maxHoursPerTypePerDay)  # Output: {'A': 3, 'B': 2}
-    # print(schedule.minTimeFrame)  # Output: 0:15:00
 
     tasks_data = [
         {"id": 1, "priority": "high", "length": 60, "deadline": datetime(2023, 4, 13, 9, 0, 0), "isRepeat": False,
@@ -476,45 +480,3 @@ if __name__ == "__main__":
         task = Task(**data)
         tasks.append(task)
 
-    # # Connect to the SignalR hub on the server
-    # with Connection("http://localhost:3000/signalr") as connection:
-    #     # Set up the function to be called when the server receives the solution
-    #     connection.on("ReceiveSolution", on_solution_received)
-    #
-    #     # Start the connection
-    #     connection.start()
-    #
-    #     # Send the solution dictionary to the server
-    #     solution = generate_schedule(tasks, schedule)
-    #     connection.send("SendSolution", solution)
-    #
-    #     # Wait for the server to acknowledge receipt of the solution
-    #     input("Press any key to exit...")
-
-def SimpleSatProgram():
-    """Minimal CP-SAT example to showcase calling the solver."""
-    # Creates the model.
-    model = cp_model.CpModel()
-
-    # Creates the variables.
-    num_vals = 3
-    x = model.NewIntVar(0, num_vals - 1, 'x')
-    y = model.NewIntVar(0, num_vals - 1, 'y')
-    z = model.NewIntVar(0, num_vals - 1, 'z')
-
-    # Creates the constraints.
-    model.Add(x != y)
-
-    # Creates a solver and solves the model.
-    solver = cp_model.CpSolver()
-    status = solver.Solve(model)
-
-    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-        print('x = %i' % solver.Value(x))
-        print('y = %i' % solver.Value(y))
-        print('z = %i' % solver.Value(z))
-    else:
-        print('No solution found.')
-
-
-# SimpleSatProgram()
