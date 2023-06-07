@@ -9,6 +9,7 @@ from math import prod
 import random
 import requests
 from flask import Flask , request, jsonify
+from dateutil import parser
 
 app = Flask(__name__)
 
@@ -118,13 +119,55 @@ def init_variables(time_slots_dict):
         variables[(day_of_week, slot_number)] = None
     return variables
 
+def formatFromVsToAlg(oldFormat,typeformat = None):
+    dt = parser.isoparse(oldFormat)
+    if typeformat is None:
+        output_time = dt.strftime("%H:%M:%S")
+    else:
+        output_time = dt.strftime(typeformat)
+    return output_time
+
+def toFloatList(stringList):
+    newList = []
+    for timeString in stringList:
+        hours, minutes, seconds = map(int, timeString.split(':'))
+        hour_float = hours + minutes / 60
+        newList.append(hour_float)
+    return newList
+
+
+def toCorrectJsonTasks(jsonFromRequest):
+    tasks = []
+    # data = json.loads(jsonFromRequest)
+    for mission in jsonFromRequest:
+        if mission is not None:
+            id = int(mission['Id'])
+            priority = mission['Priority']
+            length = float(mission['Length'])
+            optionalDays =mission['OptionalDays']
+            optionalHours = toFloatList(mission['OptionalHours'])
+            deadline = formatFromVsToAlg(mission['DeadLine'],"%Y-%m-%d %H:%M:%S")   #need the whole format
+            type = mission['Type']
+            description = mission['Description']
+            tasks.append(Task(id,priority,length,deadline,False,optionalDays,optionalHours,[],type,description))
+    return tasks
+
+def setTheSettings(outsideData):
+    starthour = formatFromVsToAlg(outsideData['StartHour'])
+    endhour = formatFromVsToAlg(outsideData['EndHour'])
+    mingap = int(outsideData['MinGap'])
+    maxhours = int(outsideData['MaxHoursPerDay'])
+    minframe = int(outsideData['MinTimeFrame'])
+    return ScheduleSettings(starthour,endhour,mingap,maxhours,minframe)
+
 @app.route('/algoComplete', methods=['POST'])
 def generate_schedule():
     data = request.get_json()
-    algoComplete = data.get('complete')
-    settings = algoComplete.ScheduleSetting
-    tasks = algoComplete.AlgoMission
+    settingsFromJson = data['ScheduleSetting']
+    tasksFromJson = data['AlgoMission']
+    settings = setTheSettings(settingsFromJson)
 
+    tasks = toCorrectJsonTasks(tasksFromJson)
     date_format = "%Y-%m-%d %H:%M:%S"
     # Create time slots for the week
     start = datetime.combine(settings.startDate(), settings.startHour)
@@ -166,12 +209,12 @@ def generate_schedule():
     for j, task in enumerate(tasks):
         consecutive_slots[task.id] = []
         # task_to_index_its_options[j] = len(consecutive_slots)
-        hour_int_start = int(task.optionalHours[0])  # get the integer part of the hour
+        hour_int_start = int(task.optionalHours[1])  # get the integer part of the hour
         minute_int_start = int(
-            (task.optionalHours[0] - hour_int_start) * 60)  # get the minute part of the hour
-        hour_int_end = int(task.optionalHours[1])  # get the integer part of the hour
+            (task.optionalHours[1] - hour_int_start) * 60)  # get the minute part of the hour
+        hour_int_end = int(task.optionalHours[0])  # get the integer part of the hour
         minute_int_end = int(
-            (task.optionalHours[1] - hour_int_end) * 60)  # get the minute part of the hour
+            (task.optionalHours[0] - hour_int_end) * 60)  # get the minute part of the hour
         deadline = task.deadline
 
 
@@ -184,7 +227,8 @@ def generate_schedule():
             time_task_may_end = time_task_may_end + timedelta(minutes=15)
             if not weekdays[(time_slots[i].weekday() + 1) % 7] in task.optionalDays or time_slots[i] < time_task_may_start or time_slots[i] > time_task_may_end :
                 continue
-            if time_slots[i] > task.deadline:
+            deadlineDatatime = datetime.strptime(task.deadline, date_format)
+            if time_slots[i] > deadlineDatatime:
                 continue
             for k in range(i, i + int(task.length / settings.minTimeFrame) + 1):
                 # create a datetime object with today's date and the corresponding time
@@ -218,9 +262,9 @@ def generate_schedule():
     medium_priority_task_list = []
     low_priority_task_list = []
     for task in tasks:
-        if task.priority == "high":
+        if task.priority == "High":
             high_priority_task_list.append(task)
-        elif task.priority == "medium":
+        elif task.priority == "Medium":
             medium_priority_task_list.append(task)
         else:
             low_priority_task_list.append(task)
@@ -265,7 +309,24 @@ def generate_schedule():
 
         solutions[solution_index] = task_day_start_end, unscheduled_tasks
         # Return the result as JSON
-    return jsonify(solutions)
+    json_array = []
+    for solution_id, solution_data in solutions.items():
+
+        json_array.append(str(solution_id))
+        time_slots_dict, unscheduled_tasks = solution_data
+        json_array.append(str(len(unscheduled_tasks)))
+        # if unscheduled_tasks == []:
+        #     json_array.append(unscheduled_tasks)
+        # else:
+        #     for taskId in unscheduled_tasks:
+        #         json_array.append(str(taskId))
+        for mission_id, time_slots in time_slots_dict.items():
+            start_slot, last_slot = time_slots
+            json_array.append(str(mission_id))
+            json_array.append(start_slot.strftime('%Y-%m-%d %H:%M:%S'))
+            json_array.append(last_slot.strftime('%Y-%m-%d %H:%M:%S'))
+
+    return json.dumps(json_array)
 
 
 def sort_by_least_options(task_list, all_blocks):
