@@ -35,11 +35,14 @@ weekdays = {
 }
 RANK_POLICY = 1
 NUMOFSOLUTIONS = 1
+
+COMMON_TIME_FORMAT = "%H:%M:%S"
+EXTENDED_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 class Task:
     def __init__(self, id: int, priority: str, length: int,
                  deadline: datetime, isRepeat: bool, optionalDays: List[str],
                  optionalHours: List[float], rankListHistory: List[int], type: str, description: str,
-                 start: datetime = None):
+                 start: datetime = None,rank =4):
         self.id = id
         self.priority = priority
         self.start = start if start else datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
@@ -51,13 +54,14 @@ class Task:
         self.rankListHistory = rankListHistory
         self.type = type
         self.description = description
+        self.rank = rank
 
 
 class ScheduleSettings:
     def __init__(self, startHour: str, endHour: str, minGap: int, maxHoursPerDay: int,
                  minTimeFrame: int = 15):
-        self.startHour = datetime.strptime(startHour, "%H:%M:%S").time()
-        self.endHour = datetime.strptime(endHour, "%H:%M:%S").time()
+        self.startHour = datetime.strptime(startHour, COMMON_TIME_FORMAT).time()
+        self.endHour = datetime.strptime(endHour, COMMON_TIME_FORMAT).time()
         self.minGap = minGap
         self.maxHoursPerDay = maxHoursPerDay
         self.minTimeFrame = minTimeFrame
@@ -122,7 +126,7 @@ def init_variables(time_slots_dict):
 def formatFromVsToAlg(oldFormat,typeformat = None):
     dt = parser.isoparse(oldFormat)
     if typeformat is None:
-        output_time = dt.strftime("%H:%M:%S")
+        output_time = dt.strftime(COMMON_TIME_FORMAT)
     else:
         output_time = dt.strftime(typeformat)
     return output_time
@@ -149,7 +153,8 @@ def toCorrectJsonTasks(jsonFromRequest):
             deadline = formatFromVsToAlg(mission['DeadLine'],"%Y-%m-%d %H:%M:%S")   #need the whole format
             type = mission['Type']
             description = mission['Description']
-            tasks.append(Task(id,priority,length,deadline,False,optionalDays,optionalHours,[],type,description))
+            rankedList = mission['RankListHistory']
+            tasks.append(Task(id,priority,length,deadline,False,optionalDays,optionalHours,rankedList,type,description))
     return tasks
 
 def setTheSettings(outsideData):
@@ -159,6 +164,20 @@ def setTheSettings(outsideData):
     maxhours = int(outsideData['MaxHoursPerDay'])
     minframe = int(outsideData['MinTimeFrame'])
     return ScheduleSettings(starthour,endhour,mingap,maxhours,minframe)
+
+def tasksSortedToPriorityLists(tasks):
+    high_priority_task_list = []
+    medium_priority_task_list = []
+    low_priority_task_list = []
+    for task in tasks:
+        if task.priority == "High":
+            high_priority_task_list.append(task)
+        elif task.priority == "Medium":
+            medium_priority_task_list.append(task)
+        else:
+            low_priority_task_list.append(task)
+    return high_priority_task_list,medium_priority_task_list,low_priority_task_list
+
 
 @app.route('/algoComplete', methods=['POST'])
 def generate_schedule():
@@ -215,6 +234,14 @@ def generate_schedule():
         hour_int_end = int(task.optionalHours[0])  # get the integer part of the hour
         minute_int_end = int(
             (task.optionalHours[0] - hour_int_end) * 60)  # get the minute part of the hour
+        if hour_int_start > hour_int_end or hour_int_end == hour_int_start and minute_int_start > minute_int_end:
+            hour = hour_int_start
+            minute = minute_int_start
+            hour_int_start = hour_int_end
+            minute_int_start = minute_int_end
+            hour_int_end = hour
+            minute_int_end = minute
+
         deadline = task.deadline
 
 
@@ -256,18 +283,16 @@ def generate_schedule():
                         consecutive_sequence.append(time_slots[k])
     num_of_tasks = len(tasks)
     task_sum = 1
+    unschedualed_tasks = []
+    no_options_tasks_ids = [idTask for idTask, value in consecutive_slots.items() if value == []]
+    for idTask in no_options_tasks_ids:
+        del consecutive_slots[idTask]
+        for taskProblem in tasks:
+            if taskProblem.id in no_options_tasks_ids:
+                tasks.remove(taskProblem)
+        unschedualed_tasks.append(idTask)
 
-    switch_consecutive_slots_sequence_according_to_rank(tasks, consecutive_slots, time_slots_dict)
-    high_priority_task_list = []
-    medium_priority_task_list = []
-    low_priority_task_list = []
-    for task in tasks:
-        if task.priority == "High":
-            high_priority_task_list.append(task)
-        elif task.priority == "Medium":
-            medium_priority_task_list.append(task)
-        else:
-            low_priority_task_list.append(task)
+    high_priority_task_list, medium_priority_task_list, low_priority_task_list = tasksSortedToPriorityLists(tasks)
 
 
     solutions = {}
@@ -277,44 +302,52 @@ def generate_schedule():
         sort_by_least_options(low_priority_task_list, consecutive_slots)
         all_tasks_sorted_together = high_priority_task_list + medium_priority_task_list + low_priority_task_list
 
+        random.seed(solution_index)              #solution index comes from the backend
+        for task in all_tasks_sorted_together:
+            random.shuffle(consecutive_slots[task.id])
+        switch_consecutive_slots_sequence_according_to_rank(tasks, consecutive_slots, time_slots_dict)
         # Try to schedule tasks one at a time
         schedule = {}
         variables = init_variables(time_slots_dict)
-        result, unscheduled_tasks = backtrack(schedule, all_tasks_sorted_together, consecutive_slots, settings, variables,time_slots_dict, 1)
-        if len(unscheduled_tasks) != 0:
-            print(f"cannot schedule tasks - {unscheduled_tasks}")
+        result, unscheduled_tasks1 = backtrack(schedule, all_tasks_sorted_together, consecutive_slots, settings, variables,time_slots_dict, 1,len(tasks),time_slots_dict)
+        unschedualed_tasks.extend(unscheduled_tasks1)
+        if len(unschedualed_tasks) != 0:
+            print(f"cannot schedule tasks - {unschedualed_tasks}")
 
         flipped = {}
         task_day_start_end = {}
+        if result != []:
+            for key, value in result.items():
+                if value not in flipped:
+                    flipped[value] = [key]
+                else:
+                    flipped[value].append(key)
 
-        for key, value in result.items():
-            if value not in flipped:
-                flipped[value] = [key]
-            else:
-                flipped[value].append(key)
+            for key, value in flipped.items():
+                start = settings.endHour.strftime(COMMON_TIME_FORMAT)
+                datetime_start = None
+                end = settings.startHour.strftime(COMMON_TIME_FORMAT)
+                datetime_end = None
+                for i, slot in enumerate(value):
+                    slot_time = slot.strftime(COMMON_TIME_FORMAT)
+                    if slot_time < start:
+                        datetime_start = slot
+                        start = slot_time
+                    if slot_time > end and i < len(value):
+                        datetime_end = slot
+                task_day_start_end[key] = (datetime_start, datetime_end)
 
-        for key, value in flipped.items():
-            start = settings.endHour.strftime("%H:%M:%S")
-            datetime_start = None
-            end = settings.startHour.strftime("%H:%M:%S")
-            datetime_end = None
-            for i, slot in enumerate(value):
-                slot_time = slot.strftime("%H:%M:%S")
-                if slot_time < start:
-                    datetime_start = slot
-                    start = slot_time
-                if slot_time > end and i < len(value):
-                    datetime_end = slot
-            task_day_start_end[key] = (datetime_start, datetime_end)
-
-        solutions[solution_index] = task_day_start_end, unscheduled_tasks
+            solutions[solution_index] = task_day_start_end, unschedualed_tasks
         # Return the result as JSON
     json_array = []
+    flag = 0
     for solution_id, solution_data in solutions.items():
-
-        json_array.append(str(solution_id))
         time_slots_dict, unscheduled_tasks = solution_data
-        json_array.append(str(len(unscheduled_tasks)))
+        if flag == 0:
+            json_array.append(str(len(unscheduled_tasks)))
+            flag = 1
+        json_array.append(str(solution_id))
+
         # if unscheduled_tasks == []:
         #     json_array.append(unscheduled_tasks)
         # else:
@@ -323,8 +356,8 @@ def generate_schedule():
         for mission_id, time_slots in time_slots_dict.items():
             start_slot, last_slot = time_slots
             json_array.append(str(mission_id))
-            json_array.append(start_slot.strftime('%Y-%m-%d %H:%M:%S'))
-            json_array.append(last_slot.strftime('%Y-%m-%d %H:%M:%S'))
+            json_array.append(start_slot.strftime(EXTENDED_TIME_FORMAT))
+            json_array.append(last_slot.strftime(EXTENDED_TIME_FORMAT))
 
     return json.dumps(json_array)
 
@@ -358,79 +391,239 @@ def sort_by_least_options(task_list, all_blocks):
 
     return all_tasks_sorted_together
 
-def checkLimitHourADay(variables, settings, day):
+def checkLimitHourADay(variables, settings, day,task_length):
     summ = 0
     slotsADay = int(settings.number_slots_aday(variables))
     for i in range(slotsADay * day, slotsADay * (day + 1)):
         if variables[(day, i)] is not None:
             summ += 1
-    return summ <= settings.maxHoursPerDay
+    if summ <= settings.maxHoursPerDay * 4 - 1 - task_length / 15:
+        return True
+    return False
+
+def check_for_another_option(previousTaskId,consecutive_slots,variables,desired_slots_indexes,index_to_slot_dict):
+    for block in consecutive_slots[previousTaskId]:
+        block_slots, day, start_slot_index, end_slot_index = block
+        red_flag= 0
+        for i in range(start_slot_index,end_slot_index+1):
+            if (variables[(day,i)] is not None and variables[(day,i)] != previousTaskId) or (i in desired_slots_indexes):
+                red_flag =1
+        if red_flag == 0:
+            return True
+    return False
 
 
-def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, current_task_index):
+
+def check_for_alternative(tasks, unscheduledId, consecutive_slots, variables,schedule,time_slots_dict):
+    allPreviuosTaskId = set(variables.values())
+    allPreviuosTaskId.discard(None)
+    conflicted_tasks = []
+    for previousTaskId in allPreviuosTaskId:
+        slots = [slotString for slotString, value in schedule.items() if value == previousTaskId]
+        for slot in slots:
+            for block in consecutive_slots[unscheduledId]:
+                block_slots, day, start_slot_index, end_slot_index = block
+                for i in range(start_slot_index,end_slot_index+1):
+                    if variables[(day,i)] != previousTaskId and variables[(day,i)] is not None:   # if there is other task on this section then i dont care and continue looping
+                        break
+                if time_slots_dict[start_slot_index] <= slot and time_slots_dict[end_slot_index] >= slot:
+                    conflicted_tasks.append(previousTaskId)
+                    for task in tasks:
+                        if task.id == unscheduledId:
+                            unscheduledTask = task
+                        if task.id == previousTaskId:
+                            prevTask = task
+                    desired_slots_indexes = list(range(start_slot_index, end_slot_index+1))
+                    if check_for_another_option(previousTaskId,consecutive_slots,variables,desired_slots_indexes,time_slots_dict) is False or (unscheduledTask.priority == "Medium" and prevTask.priority == "High"):
+                        conflicted_tasks.remove(previousTaskId)
+
+
+    optionalTasks = [tasks[taskId] for taskId in conflicted_tasks]
+    return optionalTasks
+
+def findBestOption(task,tasks_list_with_options ,variables, settings,consecutive_slots):
+    improved = []
+    notImproved = []
+    for task_with_option in tasks_list_with_options:
+        for block in consecutive_slots[task_with_option.id]:
+            block_slots, day, start_slot_index, end_slot_index = block
+            for i in range(start_slot_index,end_slot_index+1):
+                if variables[(day,i)] is not None:
+                    break
+
+            if task_with_option.rankListHistory is not []:
+                for ranking in task_with_option.rankListHistory:
+                    if ranking.startTime == start_slot_index:
+                        if ranking.rank > task_with_option.rank:
+                            improved.append((task_with_option,start_slot_index))
+                        else:
+                            if ranking.rank < task_with_option.rank and ranking.rank <= 3:
+                                pass
+                            else:
+                                notImproved.append((task_with_option,start_slot_index))
+    improved = sorted(improved, key=lambda task: task.rank)
+    notImproved = sorted(notImproved, key=lambda task: task.rank)
+    if len(improved) != 0:
+        return improved[0][0],improved[0][1]
+    elif len(notImproved) != 0:
+        return notImproved[0][0], notImproved[0][1]
+    else:
+        return [],[]
+
+def switchSlots(settings, taskToReplace, startingSlotToMove,schedule,variables,time_slots_dict):
+    old_slots = []
+    for slot, missionId in schedule.items():
+        if taskToReplace.id == missionId:
+            old_slots.append(slot)
+    totalNumOfNewSlots = len(old_slots)
+    slots_to_delete = []
+
+    for datetimeSlot, id in schedule.items():
+        if taskToReplace.id == id:
+            slots_to_delete.append(datetimeSlot)
+
+    for slot in slots_to_delete:
+        del schedule[slot]
+
+    for i,variable in enumerate(variables):
+        if variable[(i / settings.number_slots_aday(time_slots_dict),i)] == taskToReplace.id:
+            variable[(i / settings.number_slots_aday(time_slots_dict), i)] = None
+
+    for i in range((taskToReplace.length / 15) + 1):
+        slot = time_slots_dict[startingSlotToMove]
+        schedule[slot] = taskToReplace.id
+        indexOfSlot = datetime_to_slot(slot,time_slots_dict)
+        variables[(indexOfSlot / settings.number_slots_aday(time_slots_dict), indexOfSlot)] = taskToReplace.id
+
+def skipAndDeleteTask(tasks,unscheduledId,consecutive_slots, current_task_index):
+    del consecutive_slots[unscheduledId]
+    tasks.remove(tasks[current_task_index - 1])
+
+
+
+
+
+
+
+
+
+
+
+def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, current_task_index,originalNumTasks,time_to_slots_dict):
     # If all tasks have been scheduled, return the solution.
     if current_task_index > len(tasks):
         return schedule, []
 
     unscheduled_tasks = []
-
-    for block_index, block in enumerate(consecutive_slots[tasks[current_task_index - 1].id]):
+    scheduled = False
+    for block in consecutive_slots[tasks[current_task_index - 1].id]:
         slots, day, start_slot_index, end_slot_index = block
         for slot_index in range(start_slot_index, end_slot_index - len(slots) + 2):
             # Check if the current slot is already scheduled.
             conflict = False
-            for i, slot in enumerate(slots):
-                if variables[(day, slot_index + i)] is not None:
-                    conflict = True
-                    break
+            count_slots =0
+            if checkLimitHourADay(variables, settings, day,tasks[current_task_index - 1].length):
+
+                for i, slot in enumerate(slots):
+                    if variables[(day, slot_index + i)] is not None:
+                        conflict = True
+                        break
+                    count_slots += 1
+
             if conflict:
                 continue
 
             # max hour per day check
-            if checkLimitHourADay(variables, settings, day):
+            if count_slots == len(slots) :
                 # If the current slot is not scheduled, schedule the task on these slots.
                 for i, slot in enumerate(slots):
                     variables[(day, start_slot_index + i)] = tasks[current_task_index - 1].id
                     schedule[slot] = tasks[current_task_index - 1].id
+                    for rank in tasks[current_task_index - 1].rankListHistory:
+                        if slot >= rank.startTime and slot <= rank.endTime:
+                            tasks[current_task_index - 1].rank = rank.rank
+                scheduled = True
             else:
                 continue
 
-            # Recursively try to schedule the next task.
-            next_task_schedule, next_unscheduled_tasks = backtrack(schedule.copy(), tasks, consecutive_slots, settings,
-                                                                   variables,time_slots_dict, current_task_index + 1)
+        if count_slots != len(slots):
+                continue
+        # Recursively try to schedule the next task.
+        next_task_schedule, next_unscheduled_tasks = backtrack(schedule.copy(), tasks, consecutive_slots, settings,
+                                                                   variables,time_slots_dict, current_task_index + 1,originalNumTasks,time_to_slots_dict)
 
-            # If the next task has been scheduled, return the solution.
-            if len(next_unscheduled_tasks) == 0:
-                return next_task_schedule, next_unscheduled_tasks
+        # If the next task has been scheduled, return the solution.
+        if next_task_schedule == [] and next_unscheduled_tasks == []:
+            return [] , []
+        if len(next_unscheduled_tasks) + len(set(next_task_schedule.values())) == originalNumTasks:
+            return next_task_schedule, next_unscheduled_tasks
 
-            # If the next task could not be scheduled, add the current task to the unscheduled tasks list and undo the current task's schedule.
-            for i, slot in enumerate(slots):
-                variables[(day, start_slot_index + i)] = None
-                del schedule[slot]
+        # If the next task could not be scheduled, add the current task to the unscheduled tasks list and undo the current task's schedule.
+        # for i, slot in enumerate(slots):
+        #     variables[(day, start_slot_index + i)] = None
+        #     del schedule[slot]
 
     # If the current task could not be scheduled in any of its consecutive blocks, add it to the unscheduled tasks list.
-    unscheduled_tasks.append(tasks[current_task_index - 1].id)
+    if not scheduled:
+        unscheduled_tasks.append(tasks[current_task_index - 1])
+        unscheduledId = tasks[current_task_index - 1].id
+        unscheduled_task_priority = unscheduled_tasks[-1].priority
+        successfullSwitch = False
+        if unscheduled_task_priority == "High":
+            previous_tasks_with_options = check_for_alternative(tasks, unscheduledId, consecutive_slots, variables,schedule,time_to_slots_dict)
+            high_priority_task_list, medium_priority_task_list, low_priority_task_list = tasksSortedToPriorityLists(previous_tasks_with_options)
+            taskToReplace, startingSlotToMove = findBestOption(tasks[current_task_index - 1],
+                                                               high_priority_task_list ,
+                                                               variables, settings,consecutive_slots)
+            if taskToReplace == []:
+                return [] , []
+            else:
+                switchSlots(settings, taskToReplace, startingSlotToMove,schedule,variables,time_slots_dict)
+                successfullSwitch = True
 
-    task_start_end_time = {}
+        elif unscheduled_task_priority == "Medium":
+            previous_tasks_with_options = check_for_alternative(tasks,unscheduledId,consecutive_slots,variables,schedule,time_to_slots_dict)
+            high_priority_task_list, medium_priority_task_list, low_priority_task_list = tasksSortedToPriorityLists(previous_tasks_with_options)
+            all_tasks_list = high_priority_task_list+medium_priority_task_list+low_priority_task_list
+            taskToReplace,startingSlotToMove = findBestOption(unscheduled_tasks[-1],all_tasks_list,variables,settings,consecutive_slots)
+            if taskToReplace == []:
+                skipAndDeleteTask(tasks,unscheduledId,consecutive_slots, current_task_index)
+            else:
+                switchSlots(settings,taskToReplace,startingSlotToMove,schedule,variables,time_slots_dict)
+                successfullSwitch = True
 
-    return schedule, unscheduled_tasks
+
+        else:
+            skipAndDeleteTask(tasks, unscheduledId, consecutive_slots,current_task_index)
+        next_task_schedule, next_unscheduled_tasks = backtrack(schedule.copy(), tasks, consecutive_slots,
+                                                               settings,
+                                                               variables, time_slots_dict, current_task_index,
+                                                               originalNumTasks, time_to_slots_dict)
+        if successfullSwitch is False:
+            next_unscheduled_tasks.append(unscheduledId)
+        return next_task_schedule, next_unscheduled_tasks
+    return [], []
 
 def sort_by_rank_and_start_time(rank_list_history):
-    return sorted(rank_list_history, key=lambda x: (x['rank'], x['startTime'] ), reverse=True)
+    return sorted(rank_list_history, key=lambda x: (x['Rank'], x['StartTime'] ), reverse=True)
 
 def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_slots, time_slots_dict):
     for task in tasks_data:
         sorted_task = sort_by_rank_and_start_time(task.rankListHistory)
         for i, consecutive_sequence in enumerate(consecutive_slots[task.id]):
             for rank_data in sorted_task:
-                rank = rank_data['rank']
-                start_time = rank_data['startTime']
-                end_time = rank_data['endTime']
+                rank = rank_data['Rank']
+                start_time_string = rank_data['StartTime']
+                start_time_string = start_time_string.replace("T", " ")
+                end_time_string = rank_data['EndTime']
+                end_time_string = end_time_string.replace("T", " ")
                 assigned_slots = []
+                datetimeStart= datetime.strptime(start_time_string, EXTENDED_TIME_FORMAT)
+                datetimeEnd = datetime.strptime(end_time_string, EXTENDED_TIME_FORMAT)
 
                 #convert time to tuple
-                tuple_start = datetime_to_slot(rank_data['startTime'], time_slots_dict)
-                tuple_end = datetime_to_slot(rank_data['endTime'], time_slots_dict)
+                tuple_start = datetime_to_slot(datetimeStart, time_slots_dict)
+                tuple_end = datetime_to_slot(datetimeEnd, time_slots_dict)
 
                 consecutive_sequence_start = datetime_to_slot(consecutive_sequence[0][0], time_slots_dict)
                 consecutive_sequence_end = datetime_to_slot(consecutive_sequence[0][-1], time_slots_dict)
@@ -440,104 +633,9 @@ def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_
                     consecutive_slots[task.id].insert(0, consecutive_sequence)
                     break
 
-# def getAlgoCompleteRequest():
-#     # api-endpoint
-#     URL = "http://localhost/algoComplete"
-#     r = requests.get(url=URL)
-#     data = r.json()
-#     return data[0] , data[1]
-#
-#
-# def getTaskDataRequest():
-#     # api-endpoint
-#     URL = "http://localhost/taskData"
-#     r = requests.get(url=URL)
-#     data = r.json()
-#     return data
-# def getScheduleSettingsRequest():
-#     # api-endpoint
-#     URL = "http://localhost/scheduleSettings"
-#     r = requests.get(url=URL)
-#     data = r.json()
-#     return data
-#
-#
-# def postSchedule(data):
-#     # defining the api-endpoint
-#     API_ENDPOINT = "http://localhost/scheduleAlgo"
-#     # sending post request and saving response as response object
-#     r = requests.post(url=API_ENDPOINT, data=data)
 
 
 if __name__ == "__main__":
     app.run(host='localhost', port=5000)
-    # Send the solution dictionary to the server
-    # task_data ,settings = getAlgoCompleteRequest()         # we get
-    # solution = generate_schedule(task_data, settings)
-    # # solution = generate_schedule(getTaskDataRequest(), getScheduleSettingsRequest())
-    # postSchedule(solution)
-    #
-    #
-    # scheduleSettings = {
-    #     "startHour": "9:00:00",
-    #     "endHour": "18:00:00",
-    #     "minGap": 15,
-    #     "maxHoursPerDay": 5,
-    #     "minTimeFrame": 15
-    # }
-    #
-    # schedule = ScheduleSettings(**scheduleSettings)
 
-
-    tasks_data = [
-        {"id": 1, "priority": "high", "length": 60, "deadline": datetime(2023, 4, 13, 9, 0, 0), "isRepeat": False,
-         "optionalDays": ["Sunday"],
-         "optionalHours": [10.50, 12.50],
-         "rankListHistory": [
-             {"rank": 6, "startTime": datetime(2023, 4, 3, 11, 30), "endTime": datetime(2023, 4, 3, 12, 30)},
-             {"rank": 2, "startTime": datetime(2023, 4, 9, 9, 0), "endTime": datetime(2023, 4, 9, 10, 0)},
-             {"rank": 6, "startTime": datetime(2023, 4, 8, 12, 0), "endTime": datetime(2023, 4, 8, 13, 0)}
-         ],
-         "type": "A",
-         "description": "This is task 1"
-         },
-        {
-            "id": 2,
-            "priority": "medium",
-            "length": 45,
-            "deadline": datetime(2023, 4, 11, 11, 0, 0),
-            "isRepea"
-            "t": True,
-            "optionalDays": ["Monday"],
-            "optionalHours": [10.50, 13.00],
-            "rankListHistory": [
-                {"rank": 2, "startTime": datetime(2023, 4, 3, 11, 30), "endTime": datetime(2023, 4, 3, 12, 15)},
-                {"rank": 1, "startTime": datetime(2023, 4, 2, 9, 0), "endTime": datetime(2023, 4, 2, 9, 45)},
-                {"rank": 3, "startTime": datetime(2023, 4, 1, 9, 0), "endTime": datetime(2023, 4, 1, 9, 45)}
-            ],
-            "type": "B",
-            "description": "This is task 2"
-        },
-        {
-            "id": 3,
-            "priority": "low",
-            "length": 60,
-            "deadline": datetime(2023, 4, 11, 18, 0, 0),
-            "isRepeat": False,
-            "optionalDays": ["Sunday","Monday"],
-            "optionalHours": [10.75, 12],
-            "rankListHistory": [
-                {"rank": 3, "startTime": datetime(2023, 4, 1, 11, 0), "endTime": datetime(2023, 4, 1, 12, 0)},
-                {"rank": 2, "startTime": datetime(2023, 4, 1, 10, 0), "endTime": datetime(2023, 4, 1, 11, 0)},
-                {"rank": 1, "startTime": datetime(2023, 4, 1, 9, 0), "endTime": datetime(2023, 4, 1, 10, 0)}
-            ],
-            "type": "B",
-            "description": "This is task 3"
-        }
-    ]
-
-    tasks = []
-    for data in tasks_data:
-        task = Task(**data)
-        tasks.append(task)
 
