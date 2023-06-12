@@ -137,10 +137,37 @@ def formatFromVsToAlg(oldFormat,typeformat = None):
         output_time = dt.strftime(typeformat)
     return output_time
 
+def find_closest_time(given_time):
+    all_acceptable_options = ["00", "15", "30", "45"]
+    given_datetime = datetime.strptime(given_time, COMMON_TIME_FORMAT)
+    minutes = given_datetime.strftime("%M")
+    if minutes in all_acceptable_options:
+        return given_time
+    closest_time = None
+    closest_timedelta = timedelta(days=1)  # Initialize with a large value
+    for minute in all_acceptable_options:
+        constructed_datetime = datetime(
+            given_datetime.year,
+            given_datetime.month,
+            given_datetime.day,
+            given_datetime.hour,
+            int(minute),
+            given_datetime.second
+        )
+        if minute == "00":
+            constructed_datetime = constructed_datetime + timedelta(hours=1)
+        if constructed_datetime > given_datetime:
+            timedelta_difference = constructed_datetime - given_datetime
+            if timedelta_difference < closest_timedelta:
+                closest_time = constructed_datetime.strftime(COMMON_TIME_FORMAT)
+                closest_timedelta = timedelta_difference
+    return closest_time
+
 def toFloatList(stringList):
     newList = []
     for timeString in stringList:
         timeString = formatFromVsToAlg(timeString)
+        timeString = find_closest_time(timeString)
         hours, minutes, seconds = map(int, timeString.split(':'))
         hour_float = hours + minutes / MIN_IN_HOUR
         newList.append(hour_float)
