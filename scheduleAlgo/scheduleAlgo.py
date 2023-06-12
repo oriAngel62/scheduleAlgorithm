@@ -287,81 +287,37 @@ def sort_and_shuffle(tasks,consecutive_slots,time_slots_dict):
     consecutive_slots = switch_consecutive_slots_sequence_according_to_rank(all_tasks_sorted_together, consecutive_slots, time_slots_dict)
     return all_tasks_sorted_together , consecutive_slots
 
+def sort_by_rank_and_start_time(rank_list_history):
+    return sorted(rank_list_history, key=lambda x: (x['Rank'], x['StartTime'] ), reverse=False)
 
-def to_solution_format(settings, result, unschedualed_tasks):
-    flipped = {}
-    task_day_start_end = {}
-    if result:
-        for key, value in result.items():
-            if value not in flipped:
-                flipped[value] = [key]
-            else:
-                flipped[value].append(key)
-        for key, value in flipped.items():
-            start = settings.endHour.strftime(COMMON_TIME_FORMAT)
-            datetime_start = None
-            end = settings.startHour.strftime(COMMON_TIME_FORMAT)
-            datetime_end = None
-            for i, slot in enumerate(value):
-                slot_time = slot.strftime(COMMON_TIME_FORMAT)
-                if slot_time < start:
-                    datetime_start = slot
-                    start = slot_time
-                if slot_time > end and i < len(value):
-                    datetime_end = slot
-            task_day_start_end[key] = (datetime_start, datetime_end)
-        return task_day_start_end, unschedualed_tasks
-    return [], []
+def rank_history_to_datetime(ranked_data,time_format):
+    start_time_string = ranked_data['StartTime']
+    start_time_string = start_time_string.replace("T", " ")
+    end_time_string = ranked_data['EndTime']
+    end_time_string = end_time_string.replace("T", " ")
+    datetimeStart = datetime.strptime(start_time_string, time_format)
+    datetimeEnd = datetime.strptime(end_time_string, time_format)
+    return datetimeStart, datetimeEnd
 
 
-def solution_to_json(solutions):
-    json_array = []
-    flag = START_AT_ZERO
-    for solution_id, solution_data in solutions.items():
-        time_slots_dict, unscheduled_tasks = solution_data
-        if flag == START_AT_ZERO:
-            json_array.append(str(len(unscheduled_tasks)))
-            flag = START_AT_ONE
-        json_array.append(str(solution_id))
-        if not time_slots_dict:
-            json_array.append(str(solution_id))  # if no solution available
-        else:
-            for mission_id, time_slots in time_slots_dict.items():
-                start_slot, last_slot = time_slots
-                json_array.append(str(mission_id))
-                json_array.append(start_slot.strftime(EXTENDED_TIME_FORMAT))
-                json_array.append(last_slot.strftime(EXTENDED_TIME_FORMAT))
-    return json_array
-
-
-@app.route('/algoComplete', methods=['POST'])
-def generate_schedule():
-    data = request.get_json()
-    settingsFromJson = data['ScheduleSetting']
-    tasksFromJson = data['AlgoMission']
-    settings = setTheSettings(settingsFromJson)
-    tasks = toCorrectJsonTasks(tasksFromJson)
-    # Create time slots for the week
-    time_slots_dict, time_slots = create_slots(settings)
-    consecutive_slots = calc_all_options_for_all_tasks(settings, tasks, time_slots)
-    unschedualed_tasks, tasks = find_all_problematic_tasks(consecutive_slots, tasks)
-    solutions = {}
-    original_task_id_list = []
-    for task in tasks:
-        original_task_id_list.append(task.id)
-    for solution_index in range(START_AT_ZERO,NUMOFSOLUTIONS):
-        tasks, consecutive_slots = sort_and_shuffle(tasks, consecutive_slots,time_slots_dict)
-        # Try to schedule tasks one at a time
-        schedule = {}
-        variables = init_variables(time_slots_dict)
-        result,  unscheduled_tasks1  = backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, START_AT_ONE,len(tasks),time_slots_dict,[])
-        unschedualed_tasks.extend(unscheduled_tasks1)
-        if len(unschedualed_tasks) != START_AT_ZERO:
-            print(f"cannot schedule tasks - {unschedualed_tasks}")
-        solutions[solution_index] = to_solution_format(settings, result, unschedualed_tasks)
-        # Return the result as JSON
-    json_array = solution_to_json(solutions)
-    return json.dumps(json_array)
+def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_slots, time_slots_dict):
+    for task in tasks_data:
+        sorted_task = sort_by_rank_and_start_time(task.rankListHistory)
+        for consecutive_sequence in consecutive_slots[task.id]:
+            for rank_data in sorted_task:
+                rank = rank_data['Rank']
+                datetimeStart, datetimeEnd = rank_history_to_datetime(rank_data,EXTENDED_TIME_FORMAT)
+                #convert time to tuple
+                tuple_start = datetime_to_slot(datetimeStart, time_slots_dict)
+                tuple_end = datetime_to_slot(datetimeEnd, time_slots_dict)
+                consecutive_sequence_start = datetime_to_slot(consecutive_sequence[START_AT_ZERO][START_AT_ZERO], time_slots_dict)
+                consecutive_sequence_end = datetime_to_slot(consecutive_sequence[START_AT_ZERO][-1], time_slots_dict)
+                if consecutive_sequence_start[START_AT_ZERO] == tuple_start[START_AT_ZERO] and consecutive_sequence_end[START_AT_ZERO] == tuple_end[START_AT_ZERO] and rank > RANK_POLICY:
+                    if tuple_start[START_AT_ONE] - RANGE_FOR_RANK <= consecutive_sequence_start[START_AT_ONE] <= tuple_start[START_AT_ONE] + RANGE_FOR_RANK and tuple_end[START_AT_ONE] - RANGE_FOR_RANK <= consecutive_sequence_end[START_AT_ONE] <= tuple_end[START_AT_ONE] + RANGE_FOR_RANK:
+                        updated_seq_list = [seq for seq in consecutive_slots[task.id] if seq != consecutive_sequence]
+                        updated_seq_list.insert(START_AT_ZERO, consecutive_sequence)
+                        consecutive_slots[task.id] = updated_seq_list
+    return consecutive_slots
 
 
 def sort_by_least_options(task_list, all_blocks):
@@ -519,10 +475,89 @@ def switchSlots(settings, taskToReplace, startingSlotToMove,schedule,variables,t
         startingSlotToMove += START_AT_ONE
     return schedule , variables
 
+
 def skipAndDeleteTask(tasks,unscheduledId,consecutive_slots, current_task_index):
     del consecutive_slots[unscheduledId]
     tasks.remove(tasks[current_task_index - START_AT_ONE])
     return tasks, consecutive_slots
+
+
+
+def to_solution_format(settings, result, unschedualed_tasks):
+    flipped = {}
+    task_day_start_end = {}
+    if result:
+        for key, value in result.items():
+            if value not in flipped:
+                flipped[value] = [key]
+            else:
+                flipped[value].append(key)
+        for key, value in flipped.items():
+            start = settings.endHour.strftime(COMMON_TIME_FORMAT)
+            datetime_start = None
+            end = settings.startHour.strftime(COMMON_TIME_FORMAT)
+            datetime_end = None
+            for i, slot in enumerate(value):
+                slot_time = slot.strftime(COMMON_TIME_FORMAT)
+                if slot_time < start:
+                    datetime_start = slot
+                    start = slot_time
+                if slot_time > end and i < len(value):
+                    datetime_end = slot
+            task_day_start_end[key] = (datetime_start, datetime_end)
+        return task_day_start_end, unschedualed_tasks
+    return [], []
+
+
+def solution_to_json(solutions):
+    json_array = []
+    flag = START_AT_ZERO
+    for solution_id, solution_data in solutions.items():
+        time_slots_dict, unscheduled_tasks = solution_data
+        if flag == START_AT_ZERO:
+            json_array.append(str(len(unscheduled_tasks)))
+            flag = START_AT_ONE
+        json_array.append(str(solution_id))
+        if not time_slots_dict:
+            json_array.append(str(solution_id))  # if no solution available
+        else:
+            for mission_id, time_slots in time_slots_dict.items():
+                start_slot, last_slot = time_slots
+                json_array.append(str(mission_id))
+                json_array.append(start_slot.strftime(EXTENDED_TIME_FORMAT))
+                json_array.append(last_slot.strftime(EXTENDED_TIME_FORMAT))
+    return json_array
+
+
+@app.route('/algoComplete', methods=['POST'])
+def generate_schedule():
+    data = request.get_json()
+    settingsFromJson = data['ScheduleSetting']
+    tasksFromJson = data['AlgoMission']
+    settings = setTheSettings(settingsFromJson)
+    tasks = toCorrectJsonTasks(tasksFromJson)
+    # Create time slots for the week
+    time_slots_dict, time_slots = create_slots(settings)
+    consecutive_slots = calc_all_options_for_all_tasks(settings, tasks, time_slots)
+    unschedualed_tasks, tasks = find_all_problematic_tasks(consecutive_slots, tasks)
+    solutions = {}
+    original_task_id_list = []
+    for task in tasks:
+        original_task_id_list.append(task.id)
+    for solution_index in range(START_AT_ZERO,NUMOFSOLUTIONS):
+        tasks, consecutive_slots = sort_and_shuffle(tasks, consecutive_slots,time_slots_dict)
+        # Try to schedule tasks one at a time
+        schedule = {}
+        variables = init_variables(time_slots_dict)
+        result,  unscheduled_tasks1  = backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, START_AT_ONE,len(tasks),time_slots_dict,[])
+        unschedualed_tasks.extend(unscheduled_tasks1)
+        if len(unschedualed_tasks) != START_AT_ZERO:
+            print(f"cannot schedule tasks - {unschedualed_tasks}")
+        solutions[solution_index] = to_solution_format(settings, result, unschedualed_tasks)
+        # Return the result as JSON
+    json_array = solution_to_json(solutions)
+    return json.dumps(json_array)
+
 
 def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, current_task_index,originalNumTasks,time_to_slots_dict,id_of_deleted_tasks):
     # If all tasks have been scheduled, return the solution.
@@ -577,12 +612,10 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
         if len(id_of_deleted_tasks_came_back) + len(set(schedule.values())) == originalNumTasks:
             return next_task_schedule,  id_of_deleted_tasks_came_back
     # If the current task could not be scheduled in any of its consecutive blocks, add it to the unscheduled tasks list.
-
     isDeleted = False
     if not scheduled:
         unscheduledId = current_task.id
         unscheduled_task_priority = current_task.priority
-        successfullSwitch = False
         if unscheduled_task_priority == "High":
             return "back", [] , []
         elif unscheduled_task_priority == "Medium":
@@ -595,7 +628,6 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
                 isDeleted = True
             else:
                 schedule , variables = switchSlots(settings,taskToReplace,startingSlotToMove,schedule,variables,time_slots_dict)
-                successfullSwitch = True
         else:
             tasks,consecutive_slots = skipAndDeleteTask(tasks, unscheduledId, consecutive_slots,current_task_index)
             isDeleted = True
@@ -610,37 +642,6 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
         return next_task_schedule, id_of_deleted_tasks_came_back
     return [], []
 
-def sort_by_rank_and_start_time(rank_list_history):
-    return sorted(rank_list_history, key=lambda x: (x['Rank'], x['StartTime'] ), reverse=True)
-
-def rank_history_to_datetime(ranked_data,time_format):
-    start_time_string = ranked_data['StartTime']
-    start_time_string = start_time_string.replace("T", " ")
-    end_time_string = ranked_data['EndTime']
-    end_time_string = end_time_string.replace("T", " ")
-    datetimeStart = datetime.strptime(start_time_string, time_format)
-    datetimeEnd = datetime.strptime(end_time_string, time_format)
-    return datetimeStart, datetimeEnd
-
-
-def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_slots, time_slots_dict):
-    for task in tasks_data:
-        sorted_task = sort_by_rank_and_start_time(task.rankListHistory)
-        for i, consecutive_sequence in enumerate(consecutive_slots[task.id]):
-            for rank_data in sorted_task:
-                rank = rank_data['Rank']
-                datetimeStart, datetimeEnd = rank_history_to_datetime(rank_data,EXTENDED_TIME_FORMAT)
-                #convert time to tuple
-                tuple_start = datetime_to_slot(datetimeStart, time_slots_dict)
-                tuple_end = datetime_to_slot(datetimeEnd, time_slots_dict)
-                consecutive_sequence_start = datetime_to_slot(consecutive_sequence[START_AT_ZERO][START_AT_ZERO], time_slots_dict)
-                consecutive_sequence_end = datetime_to_slot(consecutive_sequence[START_AT_ZERO][-1], time_slots_dict)
-                if consecutive_sequence_start[START_AT_ZERO] == tuple_start[START_AT_ZERO] and consecutive_sequence_end[START_AT_ZERO] == tuple_end[START_AT_ZERO] and rank > RANK_POLICY:
-                    if tuple_start[START_AT_ONE] - RANGE_FOR_RANK <= consecutive_sequence_start[START_AT_ONE] <= tuple_start[START_AT_ONE] + RANGE_FOR_RANK and tuple_end[START_AT_ONE] - RANGE_FOR_RANK <= consecutive_sequence_end[START_AT_ONE] <= tuple_end[START_AT_ONE] + RANGE_FOR_RANK:
-                        updated_dict = [seq for seq in consecutive_slots[task.id] if seq != consecutive_sequence]
-                        updated_dict.insert(START_AT_ZERO, consecutive_sequence)
-                        consecutive_slots[task.id] = updated_dict
-    return consecutive_slots
 
 
 
