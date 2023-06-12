@@ -38,6 +38,7 @@ DYAS_A_WEEK = 7
 DEAFAULT_RANK = 4
 STARTING_HOUR = 9
 DEAFAULT_MIN_TIME_FRAME = 15
+RANGE_FOR_RANK = 2
 
 COMMON_TIME_FORMAT = "%H:%M:%S"
 EXTENDED_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
@@ -353,7 +354,7 @@ def generate_schedule():
         # Try to schedule tasks one at a time
         schedule = {}
         variables = init_variables(time_slots_dict)
-        result, unscheduled_tasks1, no_matter  = backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, START_AT_ONE,len(tasks),time_slots_dict,[])
+        result,  unscheduled_tasks1  = backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, START_AT_ONE,len(tasks),time_slots_dict,[])
         unschedualed_tasks.extend(unscheduled_tasks1)
         if len(unschedualed_tasks) != START_AT_ZERO:
             print(f"cannot schedule tasks - {unschedualed_tasks}")
@@ -373,7 +374,7 @@ def sort_by_least_options(task_list, all_blocks):
         if len(all_blocks[task.id]) != prev:
             if prev != START_AT_ZERO:
                 sublists[i] = same_num_of_options_list
-                i += 1
+                i += START_AT_ONE
                 same_num_of_options_list = []
             prev = len(all_blocks[task.id])
         same_num_of_options_list.append(task)
@@ -523,10 +524,10 @@ def skipAndDeleteTask(tasks,unscheduledId,consecutive_slots, current_task_index)
     tasks.remove(tasks[current_task_index - START_AT_ONE])
     return tasks, consecutive_slots
 
-def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, current_task_index,originalNumTasks,time_to_slots_dict,num_of_deleted_tasks):
+def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, current_task_index,originalNumTasks,time_to_slots_dict,id_of_deleted_tasks):
     # If all tasks have been scheduled, return the solution.
     if current_task_index > len(tasks):
-        return schedule, [] , num_of_deleted_tasks
+        return schedule, id_of_deleted_tasks
     current_task = tasks[current_task_index - START_AT_ONE]
     unscheduled_tasks = []
     scheduled = False
@@ -560,8 +561,8 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
         if count_slots != len(slots):
                 continue
         # Recursively try to schedule the next task.
-        next_task_schedule, next_unscheduled_tasks , num_of_deleted_tasks_came_back = backtrack(schedule, tasks, consecutive_slots, settings,
-                                                                   variables,time_slots_dict, current_task_index + START_AT_ONE,originalNumTasks,time_to_slots_dict,num_of_deleted_tasks)
+        next_task_schedule, id_of_deleted_tasks_came_back = backtrack(schedule, tasks, consecutive_slots, settings,
+                                                                   variables,time_slots_dict, current_task_index + START_AT_ONE,originalNumTasks,time_to_slots_dict,id_of_deleted_tasks)
 
         if next_task_schedule == "back":
             for i, slot in enumerate(slots):
@@ -569,21 +570,17 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
                 del schedule[slot]
             continue
         # If the next task has been scheduled, return the solution. if there was a problem return empty lists.
-        if next_task_schedule == [] and next_unscheduled_tasks == []:
-            return [], [] , []
-        if next_task_schedule == [] and next_unscheduled_tasks != []:
-            return schedule, next_unscheduled_tasks , num_of_deleted_tasks_came_back
-        if len(num_of_deleted_tasks_came_back) + len(set(schedule.values())) == originalNumTasks:
-            for taskId in num_of_deleted_tasks_came_back:
-                if taskId not in next_unscheduled_tasks:
-                    next_unscheduled_tasks.append(taskId)
-            return next_task_schedule, next_unscheduled_tasks, num_of_deleted_tasks_came_back
+        if next_task_schedule == [] and id_of_deleted_tasks_came_back == []:
+            return [], []
+        if next_task_schedule == [] and id_of_deleted_tasks_came_back != []:
+            return schedule,  id_of_deleted_tasks_came_back
+        if len(id_of_deleted_tasks_came_back) + len(set(schedule.values())) == originalNumTasks:
+            return next_task_schedule,  id_of_deleted_tasks_came_back
     # If the current task could not be scheduled in any of its consecutive blocks, add it to the unscheduled tasks list.
 
     isDeleted = False
     if not scheduled:
         unscheduledId = current_task.id
-        unscheduled_tasks.append(unscheduledId)
         unscheduled_task_priority = current_task.priority
         successfullSwitch = False
         if unscheduled_task_priority == "High":
@@ -603,17 +600,15 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
             tasks,consecutive_slots = skipAndDeleteTask(tasks, unscheduledId, consecutive_slots,current_task_index)
             isDeleted = True
         if isDeleted:
-            num_of_deleted_tasks.append(unscheduledId)
-            num_of_deleted_tasks = list(set(num_of_deleted_tasks))
-        next_task_schedule, next_unscheduled_tasks , num_of_deleted_tasks_came_back = backtrack(schedule,tasks, consecutive_slots,
+            id_of_deleted_tasks.append(unscheduledId)
+            id_of_deleted_tasks = list(set(id_of_deleted_tasks))
+        next_task_schedule , id_of_deleted_tasks_came_back = backtrack(schedule,tasks, consecutive_slots,
                                                                settings,
                                                                variables, time_slots_dict, current_task_index,
-                                                               originalNumTasks, time_to_slots_dict,num_of_deleted_tasks)
-        if successfullSwitch is False:
-            next_unscheduled_tasks.append(unscheduledId)
-            next_unscheduled_tasks = list(set(next_unscheduled_tasks))
-        return next_task_schedule, next_unscheduled_tasks , num_of_deleted_tasks_came_back
-    return [], [] , []
+                                                               originalNumTasks, time_to_slots_dict,id_of_deleted_tasks)
+
+        return next_task_schedule, id_of_deleted_tasks_came_back
+    return [], []
 
 def sort_by_rank_and_start_time(rank_list_history):
     return sorted(rank_list_history, key=lambda x: (x['Rank'], x['StartTime'] ), reverse=True)
@@ -638,13 +633,12 @@ def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_
                 #convert time to tuple
                 tuple_start = datetime_to_slot(datetimeStart, time_slots_dict)
                 tuple_end = datetime_to_slot(datetimeEnd, time_slots_dict)
-                consecutive_sequence_start = datetime_to_slot(consecutive_sequence[0][0], time_slots_dict)
-                consecutive_sequence_end = datetime_to_slot(consecutive_sequence[0][-1], time_slots_dict)
-                if consecutive_sequence_start[0] == tuple_start[0] and consecutive_sequence_end[0] == tuple_end[0] and rank > RANK_POLICY:
-                    if tuple_start[1] - 2 <= consecutive_sequence_start[1] <= tuple_start[1] + 2 and tuple_end[1] - 2 <= consecutive_sequence_end[1] <= tuple_end[1] + 2:
+                consecutive_sequence_start = datetime_to_slot(consecutive_sequence[START_AT_ZERO][START_AT_ZERO], time_slots_dict)
+                consecutive_sequence_end = datetime_to_slot(consecutive_sequence[START_AT_ZERO][-1], time_slots_dict)
+                if consecutive_sequence_start[START_AT_ZERO] == tuple_start[START_AT_ZERO] and consecutive_sequence_end[START_AT_ZERO] == tuple_end[START_AT_ZERO] and rank > RANK_POLICY:
+                    if tuple_start[START_AT_ONE] - RANGE_FOR_RANK <= consecutive_sequence_start[START_AT_ONE] <= tuple_start[START_AT_ONE] + RANGE_FOR_RANK and tuple_end[START_AT_ONE] - RANGE_FOR_RANK <= consecutive_sequence_end[START_AT_ONE] <= tuple_end[START_AT_ONE] + RANGE_FOR_RANK:
                         updated_dict = [seq for seq in consecutive_slots[task.id] if seq != consecutive_sequence]
-                        updated_dict.insert(0, consecutive_sequence)
-                        #houdi = consecutive_slots[task.id].pop(i)
+                        updated_dict.insert(START_AT_ZERO, consecutive_sequence)
                         consecutive_slots[task.id] = updated_dict
     return consecutive_slots
 
