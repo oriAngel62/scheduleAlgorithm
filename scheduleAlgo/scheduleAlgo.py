@@ -140,6 +140,7 @@ def formatFromVsToAlg(oldFormat,typeformat = None):
 def toFloatList(stringList):
     newList = []
     for timeString in stringList:
+        timeString = formatFromVsToAlg(timeString)
         hours, minutes, seconds = map(int, timeString.split(':'))
         hour_float = hours + minutes / MIN_IN_HOUR
         newList.append(hour_float)
