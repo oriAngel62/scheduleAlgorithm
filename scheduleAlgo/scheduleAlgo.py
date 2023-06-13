@@ -29,6 +29,7 @@ weekdays = {
     6: "Saturday"
 }
 RANK_POLICY = 3
+ISRAEL_GMT = 3
 NUMOFSOLUTIONS = 1
 START_AT_ZERO = 0
 START_AT_ONE = 1
@@ -129,8 +130,10 @@ def init_variables(time_slots_dict):
         variables[(day_of_week, slot_number)] = None
     return variables
 
-def formatFromVsToAlg(oldFormat,typeformat = None):
+def formatFromVsToAlg(oldFormat,fromSetting,typeformat = None):
     dt = parser.isoparse(oldFormat)
+    if not fromSetting:
+        dt = dt + timedelta(hours=ISRAEL_GMT)
     if typeformat is None:
         output_time = dt.strftime(COMMON_TIME_FORMAT)
     else:
@@ -163,18 +166,24 @@ def find_closest_time(given_time):
                 closest_timedelta = timedelta_difference
     return closest_time
 
-def toFloatList(stringList):
+def toFloatList(stringList,settings):
     newList = []
     for timeString in stringList:
-        timeString = formatFromVsToAlg(timeString)
+        timeString = formatFromVsToAlg(timeString,False)
         timeString = find_closest_time(timeString)
+        time = datetime.strptime(timeString, COMMON_TIME_FORMAT).time()
+        if time > settings.endHour:
+            time = settings.endHour
+        if time < settings.startHour:
+            time = settings.startHour
+        timeString = time.strftime(COMMON_TIME_FORMAT)
         hours, minutes, seconds = map(int, timeString.split(':'))
         hour_float = hours + minutes / MIN_IN_HOUR
         newList.append(hour_float)
     return newList
 
 
-def toCorrectJsonTasks(jsonFromRequest):
+def toCorrectJsonTasks(jsonFromRequest,settings):
     tasks = []
     for mission in jsonFromRequest:
         if mission is not None:
@@ -182,8 +191,8 @@ def toCorrectJsonTasks(jsonFromRequest):
             priority = mission['Priority']
             length = float(mission['Length'])
             optionalDays =mission['OptionalDays']
-            optionalHours = toFloatList(mission['OptionalHours'])
-            deadline = formatFromVsToAlg(mission['DeadLine'], EXTENDED_TIME_FORMAT)
+            optionalHours = toFloatList(mission['OptionalHours'],settings)
+            deadline = formatFromVsToAlg(mission['DeadLine'],False, EXTENDED_TIME_FORMAT)
             type = mission['Type']
             description = mission['Description']
             rankedList = mission['RankListHistory']
@@ -192,8 +201,8 @@ def toCorrectJsonTasks(jsonFromRequest):
 
 
 def setTheSettings(outsideData):
-    starthour = formatFromVsToAlg(outsideData['StartHour'])
-    endhour = formatFromVsToAlg(outsideData['EndHour'])
+    starthour = formatFromVsToAlg(outsideData['StartHour'],True)
+    endhour = formatFromVsToAlg(outsideData['EndHour'],True)
     mingap = int(outsideData['MinGap'])
     maxhours = int(outsideData['MaxHoursPerDay'])
     minframe = int(outsideData['MinTimeFrame'])
@@ -309,7 +318,7 @@ def sort_and_shuffle(tasks,consecutive_slots,time_slots_dict):
     sort_by_least_options(medium_priority_task_list, consecutive_slots)
     sort_by_least_options(low_priority_task_list, consecutive_slots)
     all_tasks_sorted_together = high_priority_task_list + medium_priority_task_list + low_priority_task_list
-    random.seed(get_salt_int())  # solution index comes from the backend
+    random.seed(get_salt_int())
     for task in all_tasks_sorted_together:
         random.shuffle(consecutive_slots[task.id])
     consecutive_slots = switch_consecutive_slots_sequence_according_to_rank(all_tasks_sorted_together, consecutive_slots, time_slots_dict)
@@ -563,7 +572,7 @@ def generate_schedule():
     settingsFromJson = data['ScheduleSetting']
     tasksFromJson = data['AlgoMission']
     settings = setTheSettings(settingsFromJson)
-    tasks = toCorrectJsonTasks(tasksFromJson)
+    tasks = toCorrectJsonTasks(tasksFromJson,settings)
     # Create time slots for the week
     time_slots_dict, time_slots = create_slots(settings)
     consecutive_slots = calc_all_options_for_all_tasks(settings, tasks, time_slots)
@@ -645,7 +654,7 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
         unscheduledId = current_task.id
         unscheduled_task_priority = current_task.priority
         if unscheduled_task_priority == "High":
-            return "back", [] , []
+            return "back", []
         elif unscheduled_task_priority == "Medium":
             previous_tasks_id_with_options, previous_tasks_with_options = check_for_alternative(tasks, unscheduledId, consecutive_slots, variables,schedule,time_to_slots_dict)
             high_priority_task_list, medium_priority_task_list, low_priority_task_list = tasksSortedToPriorityLists(previous_tasks_id_with_options)
