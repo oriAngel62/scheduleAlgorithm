@@ -35,14 +35,21 @@ START_AT_ZERO = 0
 START_AT_ONE = 1
 MIN_IN_HOUR = 60
 RANDOM_LENGTH = 10
-DYAS_A_WEEK = 7
+DAYS_A_WEEK = 7
 DEAFAULT_RANK = 4
 STARTING_HOUR = 9
 DEAFAULT_MIN_TIME_FRAME = 15
 RANGE_FOR_RANK = 2
+LEN_OPTIONAL_HOURS = 2
 
+OPTIONAL_TIME_MINUTES = ["00", "15", "30", "45"]
+FIFTEEN_MIN_STRING = '00:15:00'
 COMMON_TIME_FORMAT = "%H:%M:%S"
 EXTENDED_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+RANDOM_NUMBERS = '1234567890'
+HIGH = "High"
+MEDIUM = "Medium"
+CODE_WORD_FOR_ERROR = "back"
 
 class Task:
     def __init__(self, id: int, priority: str, length: int,
@@ -71,23 +78,23 @@ class ScheduleSettings:
         self.minGap = minGap
         self.maxHoursPerDay = maxHoursPerDay
         self.minTimeFrame = minTimeFrame
-        self.slotLength = int((datetime.combine(datetime.min, datetime.strptime('00:15:00', COMMON_TIME_FORMAT).time()) - datetime.min).total_seconds() / MIN_IN_HOUR)
+        self.slotLength = int((datetime.combine(datetime.min, datetime.strptime(FIFTEEN_MIN_STRING, COMMON_TIME_FORMAT).time()) - datetime.min).total_seconds() / MIN_IN_HOUR)
 
 
     def numSlots(self) -> int:
         return int((datetime.combine(datetime.now(), self.endHour) - datetime.combine(datetime.now(), self.startHour)).total_seconds() / (MIN_IN_HOUR * self.minTimeFrame))
 
     def numDays(self) -> int:
-        return 7  # assuming weekly schedule
+        return DAYS_A_WEEK  # assuming weekly schedule
 
     def startDate(self) -> datetime:
         # assuming weekly schedule starting on Sunday
         today = datetime.today()
-        return today - timedelta(days=(today.weekday() + START_AT_ONE)%7)
+        return today - timedelta(days=(today.weekday() + START_AT_ONE)%DAYS_A_WEEK)
 
     def last_day_of_week(self) -> datetime:
         today = datetime.today()
-        days_until_end_of_week = 6 - ((today.weekday() +1) % 7)
+        days_until_end_of_week = SATURDAY - ((today.weekday() +START_AT_ONE) % DAYS_A_WEEK)
         last_day = today + timedelta(days=days_until_end_of_week)
         return last_day
 
@@ -100,7 +107,7 @@ class ScheduleSettings:
         return self.minTimeFrame
 
     def number_slots_aday(self, allslots) -> int:
-        return len(allslots) / DYAS_A_WEEK
+        return int(len(allslots) / DAYS_A_WEEK)
 
 
     def get_end_hour(self):
@@ -117,16 +124,16 @@ def get_key(val,dictionary):
     return "key doesn't exist"
 
 def datetime_to_slot(datetime_obj, time_slots_dict):
-    day_of_week = (datetime_obj.weekday() + START_AT_ONE) % DYAS_A_WEEK  # Adjust for custom weekday start
+    day_of_week = (datetime_obj.weekday() + START_AT_ONE) % DAYS_A_WEEK  # Adjust for custom weekday start
     for slot_number, time_slot in time_slots_dict.items():
-        if time_slot.hour == datetime_obj.hour and time_slot.minute == datetime_obj.minute and day_of_week == (time_slot.weekday() +START_AT_ONE) % DYAS_A_WEEK:
+        if time_slot.hour == datetime_obj.hour and time_slot.minute == datetime_obj.minute and day_of_week == (time_slot.weekday() +START_AT_ONE) % DAYS_A_WEEK:
             return (day_of_week, slot_number)
     return datetime_obj  # Return None if no slot found for given datetime
 
 def init_variables(time_slots_dict):
     variables = {}
     for slot_number, time_slot in time_slots_dict.items():
-        day_of_week = (time_slot.weekday() + START_AT_ONE) % DYAS_A_WEEK
+        day_of_week = (time_slot.weekday() + START_AT_ONE) % DAYS_A_WEEK
         variables[(day_of_week, slot_number)] = None
     return variables
 
@@ -141,13 +148,13 @@ def formatFromVsToAlg(oldFormat,fromSetting,typeformat = None):
     return output_time
 
 def find_closest_time(given_time):
-    all_acceptable_options = ["00", "15", "30", "45"]
+    all_acceptable_options = OPTIONAL_TIME_MINUTES
     given_datetime = datetime.strptime(given_time, COMMON_TIME_FORMAT)
     minutes = given_datetime.strftime("%M")
     if minutes in all_acceptable_options:
         return given_time
     closest_time = None
-    closest_timedelta = timedelta(days=1)  # Initialize with a large value
+    closest_timedelta = timedelta(days=START_AT_ONE)  # Initialize with a large value
     for minute in all_acceptable_options:
         constructed_datetime = datetime(
             given_datetime.year,
@@ -157,8 +164,8 @@ def find_closest_time(given_time):
             int(minute),
             given_datetime.second
         )
-        if minute == "00":
-            constructed_datetime = constructed_datetime + timedelta(hours=1)
+        if minute == all_acceptable_options[START_AT_ZERO]:
+            constructed_datetime = constructed_datetime + timedelta(hours=START_AT_ONE)
         if constructed_datetime > given_datetime:
             timedelta_difference = constructed_datetime - given_datetime
             if timedelta_difference < closest_timedelta:
@@ -213,9 +220,9 @@ def tasksSortedToPriorityLists(tasks):
     medium_priority_task_list = []
     low_priority_task_list = []
     for task in tasks:
-        if task.priority == "High":
+        if task.priority == HIGH:
             high_priority_task_list.append(task)
-        elif task.priority == "Medium":
+        elif task.priority == MEDIUM:
             medium_priority_task_list.append(task)
         else:
             low_priority_task_list.append(task)
@@ -243,6 +250,8 @@ def calc_all_options_for_all_tasks(settings, tasks, time_slots):
     # Each task can be linked with only consecutive time slots according to its durability.
     for j, task in enumerate(tasks):
         consecutive_slots[task.id] = []
+        if task.optionalDays == [] or len(task.optionalHours) != LEN_OPTIONAL_HOURS:
+            continue
         # task_to_index_its_options[j] = len(consecutive_slots)
         hour_int_start = int(task.optionalHours[START_AT_ONE])  # get the integer part of the hour
         minute_int_start = int((task.optionalHours[START_AT_ONE] - hour_int_start) * MIN_IN_HOUR)  # get the minute part of the hour
@@ -262,28 +271,24 @@ def calc_all_options_for_all_tasks(settings, tasks, time_slots):
             end_hour_minute = datetime(START_AT_ONE, START_AT_ONE, START_AT_ONE, hour_int_end, minute_int_end).time()
             time_task_may_end = datetime.combine(time_slots[i], end_hour_minute)
             time_task_may_end = time_task_may_end + timedelta(minutes=settings.minTimeFrame)
-            if not weekdays[(time_slots[i].weekday() + START_AT_ONE) % DYAS_A_WEEK] in task.optionalDays or time_slots[i] < time_task_may_start or time_slots[i] > time_task_may_end :
+            if not weekdays[(time_slots[i].weekday() + START_AT_ONE) % DAYS_A_WEEK] in task.optionalDays or time_slots[i] < time_task_may_start or time_slots[i] > time_task_may_end :
                 continue
             deadlineDatatime = datetime.strptime(task.deadline, EXTENDED_TIME_FORMAT)
             if time_slots[i] + timedelta(minutes=task.length) > deadlineDatatime + timedelta(minutes=settings.minTimeFrame):
                 continue
             for k in range(i, i + int(task.length / settings.minTimeFrame) + START_AT_ONE):
-                # create a datetime object with today's date and the corresponding time
                 if k == i or time_slots[k] != timedelta(minutes=settings.minTimeFrame) + time_slots[k - START_AT_ONE]:
-                    # Start a new consecutive sequence.
                     consecutive_sequence = [time_slots[k]]
                 else:
-                    # Add to the current consecutive sequence and add a new sequence.
                     if k == i + int(task.length / settings.minTimeFrame):
                         consecutive_sequence.append(time_slots[k])
                         if len(consecutive_sequence) == int(task.length / settings.minTimeFrame) + START_AT_ONE:
                             every_slot_counter = START_AT_ZERO
                             for slot in consecutive_sequence:
-                                if weekdays[(slot.weekday() + START_AT_ONE) % DYAS_A_WEEK] in task.optionalDays and time_task_may_start <= slot <= time_task_may_end:
+                                if weekdays[(slot.weekday() + START_AT_ONE) % DAYS_A_WEEK] in task.optionalDays and time_task_may_start <= slot <= time_task_may_end:
                                     every_slot_counter += START_AT_ONE
                             if every_slot_counter == int(task.length / settings.minTimeFrame) + START_AT_ONE:
-                                # Check if the sequence ends before the deadline.
-                                consecutive_slots[task.id].append((consecutive_sequence, (slot.weekday() + START_AT_ONE) % DYAS_A_WEEK, i, k))
+                                consecutive_slots[task.id].append((consecutive_sequence, (slot.weekday() + START_AT_ONE) % DAYS_A_WEEK, i, k))
                                 count_seq += START_AT_ONE
                         consecutive_sequence = []
                     else:
@@ -300,11 +305,15 @@ def find_all_problematic_tasks(consecutive_slots, tasks):
             if taskProblem.id in no_options_tasks_ids:
                 tasks.remove(taskProblem)
         unschedualed_tasks.append(idTask)
+    for task in tasks:
+        if task.optionalHours[START_AT_ONE] <= task.optionalHours[START_AT_ZERO]:
+            tasks.remove(task)
+            unschedualed_tasks.append(task)
     return unschedualed_tasks, tasks
 
 
 def get_salt_int():
-    salt_chars = "1234567890"
+    salt_chars = RANDOM_NUMBERS
     salt = ""
     while len(salt) <= RANDOM_LENGTH:  # length of the random string.
         index = random.randint(START_AT_ZERO, len(salt_chars) - START_AT_ONE)
@@ -348,7 +357,7 @@ def switch_consecutive_slots_sequence_according_to_rank(tasks_data, consecutive_
                 tuple_start = datetime_to_slot(datetimeStart, time_slots_dict)
                 tuple_end = datetime_to_slot(datetimeEnd, time_slots_dict)
                 consecutive_sequence_start = datetime_to_slot(consecutive_sequence[START_AT_ZERO][START_AT_ZERO], time_slots_dict)
-                consecutive_sequence_end = datetime_to_slot(consecutive_sequence[START_AT_ZERO][-1], time_slots_dict)
+                consecutive_sequence_end = datetime_to_slot(consecutive_sequence[START_AT_ZERO][-START_AT_ONE], time_slots_dict)
                 if consecutive_sequence_start[START_AT_ZERO] == tuple_start[START_AT_ZERO] and consecutive_sequence_end[START_AT_ZERO] == tuple_end[START_AT_ZERO] and rank > RANK_POLICY:
                     if tuple_start[START_AT_ONE] - RANGE_FOR_RANK <= consecutive_sequence_start[START_AT_ONE] <= tuple_start[START_AT_ONE] + RANGE_FOR_RANK and tuple_end[START_AT_ONE] - RANGE_FOR_RANK <= consecutive_sequence_end[START_AT_ONE] <= tuple_end[START_AT_ONE] + RANGE_FOR_RANK:
                         updated_seq_list = [seq for seq in consecutive_slots[task.id] if seq != consecutive_sequence]
@@ -384,7 +393,7 @@ def sort_by_least_options(task_list, all_blocks):
 
 
 def checkLimitHourADay(variables, settings, day, task_length):
-    summ = 0
+    summ = START_AT_ZERO
     slotsADay = int(settings.number_slots_aday(variables))
     for i in range(slotsADay * day, slotsADay * (day + START_AT_ONE)):
         if variables[(day, i)] is not None:
@@ -419,7 +428,6 @@ def check_for_alternative(tasks, unscheduledId, consecutive_slots, variables,sch
                 bad_block = False
                 block_slots, day, start_slot_index, end_slot_index = block
                 for i in range(start_slot_index,end_slot_index + START_AT_ONE):
-                    # if there is other task on this section then continue looping to next block
                     if variables[(day, i)] != previousTaskId and variables[(day, i)] is not None:
                         bad_block = True
                         continue
@@ -433,7 +441,7 @@ def check_for_alternative(tasks, unscheduledId, consecutive_slots, variables,sch
                         if task.id == previousTaskId:
                             prevTask = task
                     desired_slots_indexes = list(range(start_slot_index, end_slot_index + START_AT_ONE))
-                    if check_for_another_option_for_task(previousTaskId,consecutive_slots,variables,desired_slots_indexes) is False or (unscheduledTask.priority == "Medium" and prevTask.priority == "High"):
+                    if check_for_another_option_for_task(previousTaskId,consecutive_slots,variables,desired_slots_indexes) is False or (unscheduledTask.priority == MEDIUM and prevTask.priority == HIGH):
                         conflicted_tasks.remove(previousTaskId)
                     else:
                         optionalTasksWithForbidenSlots[previousTaskId] = desired_slots_indexes
@@ -583,7 +591,6 @@ def generate_schedule():
         original_task_id_list.append(task.id)
     for solution_index in range(START_AT_ZERO,NUMOFSOLUTIONS):
         tasks, consecutive_slots = sort_and_shuffle(tasks, consecutive_slots,time_slots_dict)
-        # Try to schedule tasks one at a time
         schedule = {}
         variables = init_variables(time_slots_dict)
         result,  unscheduled_tasks1  = backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, START_AT_ONE,len(tasks),time_slots_dict,[])
@@ -591,13 +598,11 @@ def generate_schedule():
         if len(unschedualed_tasks) != START_AT_ZERO:
             print(f"cannot schedule tasks - {unschedualed_tasks}")
         solutions[solution_index] = to_solution_format(settings, result, unschedualed_tasks)
-        # Return the result as JSON
     json_array = solution_to_json(solutions)
     return json.dumps(json_array)
 
 
 def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, current_task_index,originalNumTasks,time_to_slots_dict,id_of_deleted_tasks):
-    # If all tasks have been scheduled, return the solution.
     if current_task_index > len(tasks):
         return schedule, id_of_deleted_tasks
     current_task = tasks[current_task_index - START_AT_ONE]
@@ -606,10 +611,8 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
     for block in consecutive_slots[current_task.id]:
         slots, day, start_slot_index, end_slot_index = block
         for slot_index in range(start_slot_index, end_slot_index - len(slots) + int(settings.minTimeFrame / settings.minGap) + START_AT_ONE):
-            # Check if the current slot is already scheduled.
             conflict = False
             count_slots = START_AT_ZERO
-            # max hour per day check
             if checkLimitHourADay(variables, settings, day,current_task.length):
                 for i, slot in enumerate(slots):
                     if variables[(day, slot_index + i)] is not None:
@@ -619,7 +622,6 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
             if conflict:
                 continue
             if count_slots == len(slots):
-                # If the current slot is not scheduled, schedule the task on these slots.
                 for i, slot in enumerate(slots):
                     variables[(day, start_slot_index + i)] = current_task.id
                     schedule[slot] = current_task.id
@@ -636,7 +638,7 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
         next_task_schedule, id_of_deleted_tasks_came_back = backtrack(schedule, tasks, consecutive_slots, settings,
                                                                    variables,time_slots_dict, current_task_index + START_AT_ONE,originalNumTasks,time_to_slots_dict,id_of_deleted_tasks)
 
-        if next_task_schedule == "back":
+        if next_task_schedule == CODE_WORD_FOR_ERROR:
             for i, slot in enumerate(slots):
                 variables[(day, start_slot_index + i)] = None
                 del schedule[slot]
@@ -653,9 +655,9 @@ def backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots
     if not scheduled:
         unscheduledId = current_task.id
         unscheduled_task_priority = current_task.priority
-        if unscheduled_task_priority == "High":
-            return "back", []
-        elif unscheduled_task_priority == "Medium":
+        if unscheduled_task_priority == HIGH:
+            return CODE_WORD_FOR_ERROR, []
+        elif unscheduled_task_priority == MEDIUM:
             previous_tasks_id_with_options, previous_tasks_with_options = check_for_alternative(tasks, unscheduledId, consecutive_slots, variables,schedule,time_to_slots_dict)
             high_priority_task_list, medium_priority_task_list, low_priority_task_list = tasksSortedToPriorityLists(previous_tasks_id_with_options)
             all_tasks_list = high_priority_task_list+medium_priority_task_list+low_priority_task_list
