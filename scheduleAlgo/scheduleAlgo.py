@@ -593,7 +593,7 @@ def generate_schedule():
         tasks, consecutive_slots = sort_and_shuffle(tasks, consecutive_slots,time_slots_dict)
         schedule = {}
         variables = init_variables(time_slots_dict)
-        result,  unscheduled_tasks1  = backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, START_AT_ONE,len(tasks),time_slots_dict,[])
+        result,  unscheduled_tasks1 = backtrack(schedule, tasks, consecutive_slots, settings, variables,time_slots_dict, START_AT_ONE,len(tasks),time_slots_dict,[])
         unschedualed_tasks.extend(unscheduled_tasks1)
         if len(unschedualed_tasks) != START_AT_ZERO:
             print(f"cannot schedule tasks - {unschedualed_tasks}")
